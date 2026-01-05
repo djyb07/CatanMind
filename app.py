@@ -311,8 +311,9 @@ class CatanMindApp:
             ],
             value="1",
             width=200,
-            on_change=self._on_turn_change
         )
+        # Assign event handler separately (fixes mobile crash)
+        self.turn_dropdown.on_change = self._on_turn_change
         
         # Start button
         self.start_button = ft.ElevatedButton(
