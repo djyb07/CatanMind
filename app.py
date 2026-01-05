@@ -465,6 +465,16 @@ class CatanMindApp:
                     width=140
                 ),
             ], alignment=ft.MainAxisAlignment.CENTER),
+            # Undo button row
+            ft.Row([
+                ft.ElevatedButton(
+                    "↩️ Undo Last",
+                    icon=ft.Icons.UNDO,
+                    on_click=self._on_undo,
+                    style=ft.ButtonStyle(bgcolor="#555555"),
+                    width=290
+                ),
+            ], alignment=ft.MainAxisAlignment.CENTER),
         ], spacing=10, visible=False)
         
         # Main scrollable content
@@ -1021,6 +1031,24 @@ class CatanMindApp:
         )
         self.page.dialog.open = True
         self.page.update()
+    
+    def _on_undo(self, e):
+        """Handle undo button - revert last ResourceTracker action."""
+        success = self.resource_tracker.undo()
+        if success:
+            self.page.snack_bar = ft.SnackBar(
+                content=ft.Text("↩️ Last action undone"),
+                bgcolor=COLORS["surface"]
+            )
+            self.page.snack_bar.open = True
+            self._update_recommendations()
+        else:
+            self.page.snack_bar = ft.SnackBar(
+                content=ft.Text("Nothing to undo"),
+                bgcolor=COLORS["danger"]
+            )
+            self.page.snack_bar.open = True
+            self.page.update()
 
 
 def main(page: ft.Page):

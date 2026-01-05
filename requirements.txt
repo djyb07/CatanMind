@@ -1,11 +1,3 @@
-# CatanMind - Dependencies
-# Mobile Catan AI Assistant
-
-# Core framework
 flet>=0.21.0
-
-# Visualization
 matplotlib>=3.7.0
-
-# Standard library (included in Python)
-# collections, dataclasses, enum, math, typing, io, base64
+numpy>=1.24.0

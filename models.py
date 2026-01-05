@@ -211,49 +211,63 @@ class Board:
         """
         Build the intersection graph by finding unique corners.
         Each hex has 6 corners; shared corners become single intersections.
+        Uses epsilon comparison for robust floating-point handling.
         """
-        # Collect all corner positions and map to intersection IDs
-        corner_to_id: Dict[Tuple[float, float], int] = {}
+        EPSILON = 0.5  # Tolerance for coordinate comparison
+        
+        def find_existing_node(x: float, y: float) -> Optional[int]:
+            """Find an existing node within epsilon distance."""
+            for node_id, node in self.intersections.items():
+                if abs(node.x - x) < EPSILON and abs(node.y - y) < EPSILON:
+                    return node_id
+            return None
+        
         next_id = 0
+        node_lookup: Dict[int, Tuple[float, float]] = {}  # node_id -> (x, y)
         
         # For each tile, get its corners
         tile_corners: Dict[Tuple[int, int], List[Tuple[float, float]]] = {}
+        corner_to_node: Dict[Tuple[int, int], Dict[int, int]] = {}  # (q,r) -> {corner_idx: node_id}
+        
         for (q, r), tile in self.tiles.items():
             corners = self._get_hex_corners(q, r)
             tile_corners[(q, r)] = corners
+            corner_to_node[(q, r)] = {}
             
-            for corner in corners:
-                # Round to handle floating point comparison
-                key = (round(corner[0], 1), round(corner[1], 1))
-                if key not in corner_to_id:
-                    corner_to_id[key] = next_id
-                    self.intersections[next_id] = Intersection(
-                        id=next_id,
-                        x=corner[0],
-                        y=corner[1]
+            for corner_idx, corner in enumerate(corners):
+                cx, cy = corner
+                
+                # Find existing node within epsilon
+                existing_id = find_existing_node(cx, cy)
+                
+                if existing_id is not None:
+                    node_id = existing_id
+                else:
+                    # Create new node
+                    node_id = next_id
+                    self.intersections[node_id] = Intersection(
+                        id=node_id,
+                        x=cx,
+                        y=cy
                     )
+                    node_lookup[node_id] = (cx, cy)
                     next_id += 1
+                
+                corner_to_node[(q, r)][corner_idx] = node_id
         
         # Assign touching tiles to each intersection
         for (q, r), corners in tile_corners.items():
             tile = self.tiles[(q, r)]
-            for corner in corners:
-                key = (round(corner[0], 1), round(corner[1], 1))
-                node_id = corner_to_id[key]
+            for corner_idx in range(6):
+                node_id = corner_to_node[(q, r)][corner_idx]
                 if tile not in self.intersections[node_id].touching_tiles:
                     self.intersections[node_id].touching_tiles.append(tile)
         
         # Build neighbor connections (edges of hexes)
         for (q, r), corners in tile_corners.items():
             for i in range(6):
-                corner_a = corners[i]
-                corner_b = corners[(i + 1) % 6]
-                
-                key_a = (round(corner_a[0], 1), round(corner_a[1], 1))
-                key_b = (round(corner_b[0], 1), round(corner_b[1], 1))
-                
-                id_a = corner_to_id[key_a]
-                id_b = corner_to_id[key_b]
+                id_a = corner_to_node[(q, r)][i]
+                id_b = corner_to_node[(q, r)][(i + 1) % 6]
                 
                 # Add neighbor relationship
                 if id_b not in self.intersections[id_a].neighbors:
