@@ -344,7 +344,7 @@ class CatanMindApp:
         self.interactive_board = ft.Container(
             content=ft.Stack([
                 ft.Image(
-                    src_base64=self.renderer.render_to_base64(),
+                    src=f"data:image/png;base64,{self.renderer.render_to_base64()}",
                     width=350,
                     height=350,
                     fit="contain"
@@ -659,9 +659,7 @@ class CatanMindApp:
         self.tracker_text.value = "\n".join(summaries) if summaries else "No data yet. Roll dice to start tracking."
         
         # Refresh board
-        self.board_image.src_base64 = self.renderer.render_to_base64(
-            recommendations=self.current_recommendations
-        )
+        self.board_image.src = f"data:image/png;base64,{self.renderer.render_to_base64(recommendations=self.current_recommendations)}"
         self._rebuild_board_overlay()
         
         self.page.update()
