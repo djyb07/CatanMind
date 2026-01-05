@@ -347,7 +347,7 @@ class CatanMindApp:
                     src_base64=self.renderer.render_to_base64(),
                     width=350,
                     height=350,
-                    fit=ft.ImageFit.CONTAIN
+                    fit="contain"
                 )
             ]),
             bgcolor=COLORS["surface"],
