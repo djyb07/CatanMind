@@ -127,11 +127,11 @@ class BoardRenderer:
             if tile.has_robber:
                 color = "#333333"
             
-            # FIX IS HERE: orientation=math.pi/6 ensures "Pointy Top"
-            # This matches the coordinate math from models.py
+            # FIX: orientation=0 because _hex_to_pixel already calculates Pointy-Top coords
+            # Adding pi/6 here was causing double-rotation
             ax.add_patch(RegularPolygon(
                 (x, y), numVertices=6, radius=self.HEX_SIZE,
-                orientation=math.pi/6,  # 30 degrees = Pointy Top
+                orientation=0,  # No rotation - coordinates already correct
                 facecolor=color, edgecolor='#222222', linewidth=2
             ))
             
