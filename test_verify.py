@@ -44,6 +44,20 @@ print(f"[OK] Validator: {len(valid_spots)} valid initial settlement spots")
 midgame = MidGameSolver(board)
 print("[OK] Mid-Game Solver initialized")
 
+# Test Resource Tracker
+from resource_tracker import ResourceTracker
+tracker = ResourceTracker(board)
+gains = tracker.on_dice_roll(8)
+print(f"[OK] ResourceTracker: Dice roll 8 processed, gains: {len(gains)} players")
+
+# Test robber recommendation
+target, resource, reason = tracker.get_rob_recommendation(my_id=1)
+print(f"[OK] ResourceTracker: Rob recommendation = Player {target}, {resource.value}")
+
+# Test hex recommendation
+hex_coords, hex_target, hex_reason = tracker.get_robber_hex_recommendation(my_id=1)
+print(f"[OK] ResourceTracker: Robber hex = {hex_coords}, reason: {hex_reason[:30]}...")
+
 print("\n" + "="*50)
 print("All core modules verified successfully!")
 print("="*50)
