@@ -58,186 +58,142 @@ PLAYER_COLORS = {
 class BoardRenderer:
     """Renders the board as a matplotlib figure and returns a base64 PNG."""
     
-    # Rendering parameters - used for overlay positioning
     BOARD_SIZE = 350
     HEX_SIZE = 48
     
     def __init__(self, board: Board):
         self.board = board
-        # Fixed margin that MUST match the plot limits
-        self.margin = 55  
-        self._calculate_bounds()
+        self._calculate_absolute_bounds()
     
-    def _calculate_bounds(self):
-        """Calculate simple bounds for linear mapping."""
-        all_x = [n.x for n in self.board.intersections.values()]
-        all_y = [n.y for n in self.board.intersections.values()]
+    def _calculate_absolute_bounds(self):
+        """Calculate bounds based on vertices to ensure perfect fit."""
+        all_x = []
+        all_y = []
         
-        self.min_x = min(all_x)
-        self.max_x = max(all_x)
-        self.min_y = min(all_y)
-        self.max_y = max(all_y)
+        # Calculate bounds using the CORRECTED coordinate system
+        for (q, r) in self.board.tiles.keys():
+            corners = self.board._get_hex_corners(q, r, self.HEX_SIZE)
+            for cx, cy in corners:
+                all_x.append(cx)
+                all_y.append(cy)
         
-        # Calculate the total data width/height including margins
-        self.data_width = (self.max_x + self.margin) - (self.min_x - self.margin)
-        self.data_height = (self.max_y + self.margin) - (self.min_y - self.margin)
+        min_x, max_x = min(all_x), max(all_x)
+        min_y, max_y = min(all_y), max(all_y)
         
-        # Legacy params for compatibility
-        self.scale = 1.0
-        self.offset_x = 0
-        self.offset_y = 0
-    
-    def get_render_params(self) -> Dict:
-        """
-        Get parameters for UI overlay positioning.
+        # Add padding (stroke width + margin)
+        padding = self.HEX_SIZE * 0.6
         
-        Returns:
-            Dict with scale, offset_x, offset_y, width, height
-        """
-        return {
-            "scale": self.scale,
-            "offset_x": self.offset_x,
-            "offset_y": self.offset_y,
-            "width": self.BOARD_SIZE,
-            "height": self.BOARD_SIZE
-        }
-    
+        width = (max_x - min_x) + (2 * padding)
+        height = (max_y - min_y) + (2 * padding)
+        
+        # Square the viewport
+        max_dim = max(width, height)
+        center_x = (min_x + max_x) / 2
+        center_y = (min_y + max_y) / 2
+        
+        self.view_min_x = center_x - (max_dim / 2)
+        self.view_max_x = center_x + (max_dim / 2)
+        self.view_min_y = center_y - (max_dim / 2)
+        self.view_max_y = center_y + (max_dim / 2)
+        self.view_size = max_dim
+
     def node_to_screen(self, node_id: int) -> Tuple[float, float]:
-        """Convert node position to screen coordinates using linear mapping."""
+        """Convert node to screen coordinates."""
         node = self.board.intersections[node_id]
         
-        # Map data coordinates to screen pixels (0 to BOARD_SIZE)
-        # Formula: (value - min) / total_range * screen_size
+        rel_x = (node.x - self.view_min_x) / self.view_size
+        rel_y = (node.y - self.view_min_y) / self.view_size
         
-        rel_x = (node.x - (self.min_x - self.margin)) / self.data_width
-        rel_y = (node.y - (self.min_y - self.margin)) / self.data_height
-        
-        # Y-axis: Matplotlib origin is bottom-left, Flet Stack is top-left
-        # We need to flip Y for screen coordinates
-        x = rel_x * self.BOARD_SIZE
-        y = (1 - rel_y) * self.BOARD_SIZE
-        
-        return (x, y)
-    
-    def render_to_base64(self, 
-                         highlighted_nodes: List[int] = None,
-                         recommendations: List[PlacementRecommendation] = None) -> str:
-        """Render board to base64 PNG string."""
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-        from matplotlib.patches import RegularPolygon
-        
-        fig, ax = plt.subplots(figsize=(8, 8), facecolor=COLORS["background"])
-        ax.set_facecolor(COLORS["background"])
-        ax.set_aspect('equal')
-        
-        # Draw hexagonal tiles
-        for (q, r), tile in self.board.tiles.items():
-            x, y = self._hex_to_pixel(q, r)
-            color = RESOURCE_COLORS.get(tile.resource_type, "#888888")
-            
-            # Darken if robber is here
-            if tile.has_robber:
-                color = "#333333"
-            
-            hex_patch = RegularPolygon(
-                (x, y), numVertices=6, radius=self.HEX_SIZE,
-                orientation=0,  # Fixed rotation for alignment
-                facecolor=color, edgecolor='#333333', linewidth=2
-            )
-            ax.add_patch(hex_patch)
-            
-            # Draw dice number
-            if tile.dice_number > 0 and not tile.has_robber:
-                circle = plt.Circle((x, y), 14, color='white', zorder=5)
-                ax.add_patch(circle)
-                
-                num_color = '#e94560' if tile.dice_number in [6, 8] else '#333333'
-                ax.text(x, y, str(tile.dice_number), 
-                       ha='center', va='center', fontsize=14, 
-                       fontweight='bold', color=num_color, zorder=6)
-                
-                pips = self._get_pips(tile.dice_number)
-                ax.text(x, y-20, '•' * pips, ha='center', va='center',
-                       fontsize=8, color='#666666')
-            
-            # Robber indicator
-            if tile.has_robber:
-                ax.text(x, y, "🏴‍☠️", ha='center', va='center', fontsize=20, zorder=6)
-        
-        # Draw paths (roads)
-        for path in self.board.paths:
-            node_a = self.board.intersections[path.node_a]
-            node_b = self.board.intersections[path.node_b]
-            
-            color = '#444444'
-            width = 1
-            if path.owner is not None:
-                color = PLAYER_COLORS.get(path.owner, "#ffffff")
-                width = 5
-            
-            ax.plot([node_a.x, node_b.x], [node_a.y, node_b.y],
-                   color=color, linewidth=width, zorder=2)
-        
-        # Draw intersections
-        recommended_nodes = set()
-        if recommendations:
-            for rec in recommendations[:3]:
-                recommended_nodes.add(rec.node_id)
-                if rec.complementary_spot:
-                    recommended_nodes.add(rec.complementary_spot)
-        
-        for node_id, node in self.board.intersections.items():
-            x, y = node.x, node.y
-            
-            if node.owner is not None:
-                # Player building
-                color = PLAYER_COLORS.get(node.owner, "#ffffff")
-                size = 12 if node.building_type == BuildingType.CITY else 8
-                marker = plt.Circle((x, y), size, color=color, zorder=10)
-                ax.add_patch(marker)
-                # Add symbol for city
-                if node.building_type == BuildingType.CITY:
-                    ax.text(x, y, "★", ha='center', va='center', 
-                           fontsize=8, color='white', zorder=11)
-            elif node_id in recommended_nodes:
-                # Highlighted recommendation
-                marker = plt.Circle((x, y), 10, color='#e94560', 
-                                   fill=False, linewidth=3, zorder=10)
-                ax.add_patch(marker)
-            elif highlighted_nodes and node_id in highlighted_nodes:
-                marker = plt.Circle((x, y), 7, color='#ffc107', zorder=10)
-                ax.add_patch(marker)
-            else:
-                # Normal intersection - small dot
-                marker = plt.Circle((x, y), 4, color='#555555', zorder=8)
-                ax.add_patch(marker)
-        
-        # STRICT LIMITS matching the math in node_to_screen
-        ax.set_xlim(self.min_x - self.margin, self.max_x + self.margin)
-        ax.set_ylim(self.min_y - self.margin, self.max_y + self.margin)
-        
-        ax.axis('off')
-        plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
-        
-        # Save
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=100, 
-                   facecolor=COLORS["background"], edgecolor='none')
-        plt.close(fig)
-        buf.seek(0)
-        
-        return base64.b64encode(buf.read()).decode('utf-8')
+        screen_x = rel_x * self.BOARD_SIZE
+        screen_y = (1.0 - rel_y) * self.BOARD_SIZE
+        return (screen_x, screen_y)
     
     def _hex_to_pixel(self, q: int, r: int, size: float = 50.0) -> tuple:
-        x = size * (3/2 * q)
-        y = size * (math.sqrt(3)/2 * q + math.sqrt(3) * r)
+        """
+        FIX: Match the Pointy-Top logic from models.py.
+        Old Flat-Top logic caused the 30-degree rotation error.
+        """
+        x = size * (math.sqrt(3) * q + math.sqrt(3)/2 * r)
+        y = size * (3/2 * r)
         return (x, y)
     
     def _get_pips(self, number: int) -> int:
         pips = {2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 8: 5, 9: 4, 10: 3, 11: 2, 12: 1}
         return pips.get(number, 0)
+
+    def render_to_base64(self, 
+                         highlighted_nodes: List[int] = None,
+                         recommendations: List[PlacementRecommendation] = None) -> str:
+        """Render board with corrected Pointy-Top orientation."""
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import RegularPolygon
+        
+        fig = plt.figure(figsize=(5, 5), facecolor=COLORS["background"])
+        ax = fig.add_axes([0, 0, 1, 1], facecolor=COLORS["background"])
+        ax.set_aspect('equal')
+        
+        # 1. Draw Tiles
+        for (q, r), tile in self.board.tiles.items():
+            x, y = self._hex_to_pixel(q, r, self.HEX_SIZE)
+            color = RESOURCE_COLORS.get(tile.resource_type, "#888888")
+            if tile.has_robber:
+                color = "#333333"
+            
+            # Pointy Top orientation
+            ax.add_patch(RegularPolygon(
+                (x, y), numVertices=6, radius=self.HEX_SIZE,
+                orientation=math.pi/6, facecolor=color, edgecolor='#222222', linewidth=2
+            ))
+            
+            if tile.dice_number > 0 and not tile.has_robber:
+                ax.add_patch(plt.Circle((x, y), 15, color='white', zorder=5))
+                c = '#e94560' if tile.dice_number in [6, 8] else '#333333'
+                ax.text(x, y, str(tile.dice_number), ha='center', va='center',
+                       fontsize=13, fontweight='bold', color=c, zorder=6)
+            if tile.has_robber:
+                ax.text(x, y, "🏴‍☠️", ha='center', va='center', fontsize=18, zorder=6)
+
+        # 2. Draw Roads
+        for path in self.board.paths:
+            n_a = self.board.intersections[path.node_a]
+            n_b = self.board.intersections[path.node_b]
+            if path.owner is not None:
+                c = PLAYER_COLORS.get(path.owner, "#ffffff")
+                ax.plot([n_a.x, n_b.x], [n_a.y, n_b.y], color=c, linewidth=5, zorder=4)
+                ax.plot([n_a.x, n_b.x], [n_a.y, n_b.y], color='black', linewidth=7, zorder=3)
+            else:
+                ax.plot([n_a.x, n_b.x], [n_a.y, n_b.y], color='#333333', linewidth=1, zorder=1, alpha=0.3)
+
+        # 3. Draw Nodes
+        rec_ids = set()
+        if recommendations:
+            for r in recommendations[:3]:
+                rec_ids.add(r.node_id)
+                if r.complementary_spot:
+                    rec_ids.add(r.complementary_spot)
+
+        for nid, node in self.board.intersections.items():
+            if node.owner is not None:
+                c = PLAYER_COLORS.get(node.owner, "white")
+                r = 12 if node.building_type == BuildingType.CITY else 8
+                ax.add_patch(plt.Circle((node.x, node.y), r + 2, color='black', zorder=9))
+                ax.add_patch(plt.Circle((node.x, node.y), r, color=c, zorder=10))
+            elif nid in rec_ids:
+                ax.add_patch(plt.Circle((node.x, node.y), 12, color='#e94560', alpha=0.6, zorder=15))
+            elif highlighted_nodes and nid in highlighted_nodes:
+                ax.add_patch(plt.Circle((node.x, node.y), 8, color='#ffc107', zorder=15))
+
+        ax.set_xlim(self.view_min_x, self.view_max_x)
+        ax.set_ylim(self.view_min_y, self.view_max_y)
+        ax.axis('off')
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=100, facecolor=COLORS["background"], edgecolor='none')
+        plt.close(fig)
+        buf.seek(0)
+        return base64.b64encode(buf.read()).decode('utf-8')
 
 
 class InteractiveBoard:
