@@ -492,7 +492,7 @@ class CatanMindApp:
                            size=12, color="#888888", italic=True),
                     self.interactive_board,
                 ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=5),
-                alignment=ft.alignment.center,
+                alignment=ft.Alignment(0, 0),
             ),
             self.dice_button,
             recommendation_card,
