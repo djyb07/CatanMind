@@ -59,83 +59,51 @@ class BoardRenderer:
     """Renders the board as a matplotlib figure and returns a base64 PNG."""
     
     BOARD_SIZE = 350
-    # CRITICAL FIX: Must be 50 to match models.py logic
+    # FIX: HEX_SIZE must match the default size=50.0 used in models.py!
     HEX_SIZE = 50  
     
     def __init__(self, board: Board):
         self.board = board
-        self._calculate_absolute_bounds()
-    
-    def _calculate_absolute_bounds(self):
-        """Calculate bounds based on vertices to ensure perfect fit."""
-        all_x = []
-        all_y = []
-        
-        # Calculate bounds using the vertices of all tiles
-        for (q, r) in self.board.tiles.keys():
-            # Use the internal _get_hex_corners from board logic to ensure match
-            corners = self.board._get_hex_corners(q, r, self.HEX_SIZE)
-            for cx, cy in corners:
-                all_x.append(cx)
-                all_y.append(cy)
-        
-        if not all_x:
-            # Fallback defaults
-            self.view_min_x = -150
-            self.view_max_x = 150
-            self.view_min_y = -150
-            self.view_max_y = 150
-            self.view_size = 300
-            return
-
-        min_x, max_x = min(all_x), max(all_x)
-        min_y, max_y = min(all_y), max(all_y)
-        
-        # Add small padding for stroke width (lines shouldn't be cut off)
-        padding = 4 
-        
-        width = (max_x - min_x) + (2 * padding)
-        height = (max_y - min_y) + (2 * padding)
-        
-        # Force a square viewport to match the Flet Image component (Aspect Ratio 1:1)
-        max_dim = max(width, height)
-        center_x = (min_x + max_x) / 2
-        center_y = (min_y + max_y) / 2
-        
-        self.view_min_x = center_x - (max_dim / 2)
-        self.view_max_x = center_x + (max_dim / 2)
-        self.view_min_y = center_y - (max_dim / 2)
-        self.view_max_y = center_y + (max_dim / 2)
-        self.view_size = max_dim
+        # FIX: Hardcoded viewport bounds for absolute stability
+        # A standard Catan board fits comfortably within +/- 250 units
+        self.view_min_x = -250
+        self.view_max_x = 250
+        self.view_min_y = -250
+        self.view_max_y = 250
+        self.view_size = 500  # 250 - (-250)
 
     def get_render_params(self) -> Dict:
+        """Required by UI to set container size."""
         return {
             "width": self.BOARD_SIZE,
             "height": self.BOARD_SIZE
         }
 
     def node_to_screen(self, node_id: int) -> Tuple[float, float]:
-        """Convert node to screen coordinates."""
+        """Convert node to screen coordinates using fixed viewport."""
         if node_id not in self.board.intersections:
             return (0, 0)
             
         node = self.board.intersections[node_id]
         
-        # Normalize coordinate to 0.0 - 1.0 range based on the view bounds
+        # Normalize based on the fixed 500x500 viewport
         rel_x = (node.x - self.view_min_x) / self.view_size
         rel_y = (node.y - self.view_min_y) / self.view_size
         
-        # Map to screen pixels
+        # Map to screen pixels (350x350)
+        # Flip Y because Flet draws from top-left, math is bottom-left
         screen_x = rel_x * self.BOARD_SIZE
-        screen_y = (1.0 - rel_y) * self.BOARD_SIZE  # Flet Y is top-down
+        screen_y = (1.0 - rel_y) * self.BOARD_SIZE
         return (screen_x, screen_y)
     
     def _hex_to_pixel(self, q: int, r: int, size: float = 50.0) -> tuple:
-        """Pointy-Top logic matching models.py."""
+        """
+        Match the Pointy-Top logic from models.py exactly.
+        """
         x = size * (math.sqrt(3) * q + math.sqrt(3)/2 * r)
         y = size * (3/2 * r)
         return (x, y)
-
+    
     def render_to_base64(self, 
                          highlighted_nodes: List[int] = None,
                          recommendations: List[PlacementRecommendation] = None) -> str:
@@ -145,8 +113,10 @@ class BoardRenderer:
         import matplotlib.pyplot as plt
         from matplotlib.patches import RegularPolygon
         
+        # Create a square figure
         fig = plt.figure(figsize=(5, 5), facecolor=COLORS["background"])
-        # Use exact [0,0,1,1] axes to fill the figure completely
+        
+        # FIX: Fill the entire figure with the plot, no margins
         ax = fig.add_axes([0, 0, 1, 1], facecolor=COLORS["background"])
         ax.set_aspect('equal')
         
@@ -157,7 +127,7 @@ class BoardRenderer:
             if tile.has_robber:
                 color = "#333333"
             
-            # Orientation pi/6 (30 deg) = Pointy Top
+            # Pointy Top orientation (30 degrees)
             ax.add_patch(RegularPolygon(
                 (x, y), numVertices=6, radius=self.HEX_SIZE,
                 orientation=math.pi/6, facecolor=color, edgecolor='#222222', linewidth=2
@@ -180,9 +150,10 @@ class BoardRenderer:
                 ax.plot([n_a.x, n_b.x], [n_a.y, n_b.y], color=c, linewidth=5, zorder=4)
                 ax.plot([n_a.x, n_b.x], [n_a.y, n_b.y], color='black', linewidth=7, zorder=3)
             else:
+                # Faint guide lines for roads
                 ax.plot([n_a.x, n_b.x], [n_a.y, n_b.y], color='#333333', linewidth=1, zorder=1, alpha=0.3)
 
-        # 3. Draw Nodes/Highlights
+        # 3. Draw Nodes and Recommendations
         rec_ids = set()
         if recommendations:
             for r in recommendations[:3]:
@@ -201,7 +172,7 @@ class BoardRenderer:
             elif highlighted_nodes and nid in highlighted_nodes:
                 ax.add_patch(plt.Circle((node.x, node.y), 8, color='#ffc107', zorder=15))
 
-        # Apply exact calculated bounds
+        # FIX: Apply the fixed 500x500 viewport
         ax.set_xlim(self.view_min_x, self.view_max_x)
         ax.set_ylim(self.view_min_y, self.view_max_y)
         ax.axis('off')
@@ -211,22 +182,6 @@ class BoardRenderer:
         plt.close(fig)
         buf.seek(0)
         return base64.b64encode(buf.read()).decode('utf-8')
-
-
-class InteractiveBoard:
-    """
-    Interactive board with clickable node overlays.
-    Uses ft.Stack to layer clickable buttons over the board image.
-    Note: This is now a simple data class - the actual Stack is built in CatanMindApp.
-    """
-    
-    def __init__(self, board: Board, renderer: BoardRenderer, 
-                 on_node_click, on_road_click=None):
-        self.board = board
-        self.renderer = renderer
-        self.on_node_click = on_node_click
-        self.on_road_click = on_road_click
-        self.recommendations: List[PlacementRecommendation] = []
 
 
 class CatanMindApp:
