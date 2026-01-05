@@ -204,18 +204,19 @@ class BoardRenderer:
                 marker = plt.Circle((x, y), 4, color='#555555', zorder=8)
                 ax.add_patch(marker)
         
-        # Enforce strict axis limits matching _calculate_bounds (margin=50)
+        # Set axis limits explicitly matching calculations
+        # margin must match the margin in _calculate_bounds (which is 50)
         margin = 50
         ax.set_xlim(self.min_x - margin, self.max_x + margin)
         ax.set_ylim(self.min_y - margin, self.max_y + margin)
+        
+        # Turn off axis
         ax.axis('off')
         
-        # Save WITHOUT bbox_inches='tight' to keep 1:1 pixel mapping with overlay
+        # Save WITHOUT bbox_inches='tight' to ensure strict scaling
         buf = io.BytesIO()
-        fig.set_size_inches(self.BOARD_SIZE/100, self.BOARD_SIZE/100)
-        plt.savefig(buf, format='png', dpi=100,
-                   facecolor=COLORS["background"], edgecolor='none',
-                   pad_inches=0)
+        plt.savefig(buf, format='png', dpi=100, 
+                   facecolor=COLORS["background"], edgecolor='none')
         plt.close(fig)
         buf.seek(0)
         
