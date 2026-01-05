@@ -440,8 +440,7 @@ class CatanMindApp:
             visible=False
         )
         
-        # Action buttons
-        # Action buttons - Professional Style
+        # Action buttons - Professional Style (Using Safe Hex Strings)
         self.action_buttons = ft.Column([
             ft.Row([
                 ft.ElevatedButton(
@@ -449,8 +448,8 @@ class CatanMindApp:
                     icon=ft.Icons.HOME,
                     on_click=lambda e: self._show_node_action_sheet("settlement_self"),
                     style=ft.ButtonStyle(
-                        bgcolor=ft.colors.GREEN_800, 
-                        color=ft.colors.WHITE,
+                        bgcolor="#2E7D32",  # Safe Green Hex
+                        color="white",
                         shape=ft.RoundedRectangleBorder(radius=8),
                     ),
                     expand=True
@@ -460,8 +459,8 @@ class CatanMindApp:
                     icon=ft.Icons.PERSON_OFF,
                     on_click=lambda e: self._show_enemy_build_dialog(),
                     style=ft.ButtonStyle(
-                        bgcolor=ft.colors.RED_900, 
-                        color=ft.colors.WHITE,
+                        bgcolor="#C62828",  # Safe Red Hex
+                        color="white",
                         shape=ft.RoundedRectangleBorder(radius=8),
                     ),
                     expand=True
@@ -474,7 +473,7 @@ class CatanMindApp:
                     on_click=lambda e: self._show_node_action_sheet("city_self"),
                     style=ft.ButtonStyle(
                         bgcolor=COLORS["secondary"], 
-                        color=ft.colors.WHITE,
+                        color="white",
                         shape=ft.RoundedRectangleBorder(radius=8),
                     ),
                     expand=True
@@ -485,19 +484,19 @@ class CatanMindApp:
                     on_click=lambda e: self._show_road_dialog(),
                     style=ft.ButtonStyle(
                         bgcolor=COLORS["secondary"], 
-                        color=ft.colors.WHITE,
+                        color="white",
                         shape=ft.RoundedRectangleBorder(radius=8),
                     ),
                     expand=True
                 ),
             ], alignment=ft.MainAxisAlignment.CENTER),
-            # Undo button - Outlined for hierarchy
+            # Undo button
             ft.Row([
                 ft.OutlinedButton(
                     "↩️ Undo Last Action",
                     on_click=self._on_undo,
                     style=ft.ButtonStyle(
-                        color=ft.colors.GREY_400,
+                        color="grey",
                         shape=ft.RoundedRectangleBorder(radius=8),
                     ),
                     width=200
