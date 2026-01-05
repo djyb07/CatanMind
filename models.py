@@ -151,6 +151,10 @@ class Board:
         (-2, 2), (-2, 1), (-2, 0), (-1, -1), (0, -2), (1, -2)
     ]
     
+    # CONFIGURATION: Change the order of these lists to customize the board layout.
+    # The order spirals from the outside in (starting at top-left).
+    # Resources: WOOD, BRICK, SHEEP, WHEAT, ORE, DESERT
+    
     # Default resource distribution (standard setup)
     STANDARD_RESOURCES = [
         ResourceType.ORE, ResourceType.SHEEP, ResourceType.WOOD,

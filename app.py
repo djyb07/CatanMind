@@ -64,10 +64,12 @@ class BoardRenderer:
     
     def __init__(self, board: Board):
         self.board = board
+        # Fixed margin that MUST match the plot limits
+        self.margin = 55  
         self._calculate_bounds()
     
     def _calculate_bounds(self):
-        """Calculate the bounding box of all intersections."""
+        """Calculate simple bounds for linear mapping."""
         all_x = [n.x for n in self.board.intersections.values()]
         all_y = [n.y for n in self.board.intersections.values()]
         
@@ -76,16 +78,14 @@ class BoardRenderer:
         self.min_y = min(all_y)
         self.max_y = max(all_y)
         
-        # Calculate scale and offset for fitting to BOARD_SIZE
-        range_x = self.max_x - self.min_x
-        range_y = self.max_y - self.min_y
+        # Calculate the total data width/height including margins
+        self.data_width = (self.max_x + self.margin) - (self.min_x - self.margin)
+        self.data_height = (self.max_y + self.margin) - (self.min_y - self.margin)
         
-        margin = 50
-        usable_size = self.BOARD_SIZE - 2 * margin
-        
-        self.scale = min(usable_size / range_x, usable_size / range_y)
-        self.offset_x = margin - self.min_x * self.scale + (usable_size - range_x * self.scale) / 2
-        self.offset_y = margin - self.min_y * self.scale + (usable_size - range_y * self.scale) / 2
+        # Legacy params for compatibility
+        self.scale = 1.0
+        self.offset_x = 0
+        self.offset_y = 0
     
     def get_render_params(self) -> Dict:
         """
@@ -103,10 +103,20 @@ class BoardRenderer:
         }
     
     def node_to_screen(self, node_id: int) -> Tuple[float, float]:
-        """Convert a node's position to screen coordinates."""
+        """Convert node position to screen coordinates using linear mapping."""
         node = self.board.intersections[node_id]
-        x = node.x * self.scale + self.offset_x
-        y = node.y * self.scale + self.offset_y
+        
+        # Map data coordinates to screen pixels (0 to BOARD_SIZE)
+        # Formula: (value - min) / total_range * screen_size
+        
+        rel_x = (node.x - (self.min_x - self.margin)) / self.data_width
+        rel_y = (node.y - (self.min_y - self.margin)) / self.data_height
+        
+        # Y-axis: Matplotlib origin is bottom-left, Flet Stack is top-left
+        # We need to flip Y for screen coordinates
+        x = rel_x * self.BOARD_SIZE
+        y = (1 - rel_y) * self.BOARD_SIZE
+        
         return (x, y)
     
     def render_to_base64(self, 
@@ -204,20 +214,14 @@ class BoardRenderer:
                 marker = plt.Circle((x, y), 4, color='#555555', zorder=8)
                 ax.add_patch(marker)
         
-        # Set axis limits explicitly matching calculations
-        # margin must match the margin in _calculate_bounds (which is 50)
-        margin = 50
-        ax.set_xlim(self.min_x - margin, self.max_x + margin)
-        ax.set_ylim(self.min_y - margin, self.max_y + margin)
+        # STRICT LIMITS matching the math in node_to_screen
+        ax.set_xlim(self.min_x - self.margin, self.max_x + self.margin)
+        ax.set_ylim(self.min_y - self.margin, self.max_y + self.margin)
         
-        # Turn off axis
         ax.axis('off')
-        
-        # CRITICAL FIX: Remove ALL internal matplotlib margins
-        # This forces the content to fill the exact dimensions calculated
         plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
         
-        # Save WITHOUT bbox_inches='tight' (it causes unpredictable shifts)
+        # Save
         buf = io.BytesIO()
         plt.savefig(buf, format='png', dpi=100, 
                    facecolor=COLORS["background"], edgecolor='none')
@@ -440,68 +444,46 @@ class CatanMindApp:
             visible=False
         )
         
-        # Action buttons - Professional Style (Using Safe Hex Strings)
+        # Action buttons (Safe Hex Colors)
         self.action_buttons = ft.Column([
             ft.Row([
                 ft.ElevatedButton(
                     "My Settlement",
                     icon=ft.Icons.HOME,
                     on_click=lambda e: self._show_node_action_sheet("settlement_self"),
-                    style=ft.ButtonStyle(
-                        bgcolor="#2E7D32",  # Safe Green Hex
-                        color="white",
-                        shape=ft.RoundedRectangleBorder(radius=8),
-                    ),
+                    style=ft.ButtonStyle(bgcolor="#2E7D32", color="white"),  # Green
                     expand=True
                 ),
                 ft.ElevatedButton(
                     "Enemy Build",
                     icon=ft.Icons.PERSON_OFF,
                     on_click=lambda e: self._show_enemy_build_dialog(),
-                    style=ft.ButtonStyle(
-                        bgcolor="#C62828",  # Safe Red Hex
-                        color="white",
-                        shape=ft.RoundedRectangleBorder(radius=8),
-                    ),
+                    style=ft.ButtonStyle(bgcolor="#C62828", color="white"),  # Red
                     expand=True
                 ),
-            ], alignment=ft.MainAxisAlignment.CENTER),
+            ]),
             ft.Row([
                 ft.ElevatedButton(
                     "My City",
                     icon=ft.Icons.LOCATION_CITY,
                     on_click=lambda e: self._show_node_action_sheet("city_self"),
-                    style=ft.ButtonStyle(
-                        bgcolor=COLORS["secondary"], 
-                        color="white",
-                        shape=ft.RoundedRectangleBorder(radius=8),
-                    ),
+                    style=ft.ButtonStyle(bgcolor=COLORS["secondary"], color="white"),
                     expand=True
                 ),
                 ft.ElevatedButton(
                     "My Road",
                     icon=ft.Icons.LINEAR_SCALE,
                     on_click=lambda e: self._show_road_dialog(),
-                    style=ft.ButtonStyle(
-                        bgcolor=COLORS["secondary"], 
-                        color="white",
-                        shape=ft.RoundedRectangleBorder(radius=8),
-                    ),
+                    style=ft.ButtonStyle(bgcolor=COLORS["secondary"], color="white"),
                     expand=True
                 ),
-            ], alignment=ft.MainAxisAlignment.CENTER),
-            # Undo button
-            ft.Row([
-                ft.OutlinedButton(
-                    "↩️ Undo Last Action",
-                    on_click=self._on_undo,
-                    style=ft.ButtonStyle(
-                        color="grey",
-                        shape=ft.RoundedRectangleBorder(radius=8),
-                    ),
-                    width=200
-                ),
-            ], alignment=ft.MainAxisAlignment.CENTER),
+            ]),
+            ft.OutlinedButton(
+                "↩️ Undo Last",
+                on_click=self._on_undo,
+                style=ft.ButtonStyle(color="grey"),
+                width=200
+            )
         ], spacing=10, visible=False)
         
         # Main scrollable content
