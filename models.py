@@ -191,83 +191,94 @@ class Board:
             )
     
     def _hex_to_pixel(self, q: int, r: int, size: float = 50.0) -> Tuple[float, float]:
-        """Convert axial coordinates to pixel position."""
-        x = size * (3/2 * q)
-        y = size * (math.sqrt(3)/2 * q + math.sqrt(3) * r)
+        """
+        Convert axial coordinates to pixel position.
+        Uses pointy-top hex orientation.
+        """
+        x = size * (math.sqrt(3) * q + math.sqrt(3)/2 * r)
+        y = size * (3/2 * r)
         return (x, y)
     
     def _get_hex_corners(self, q: int, r: int, size: float = 50.0) -> List[Tuple[float, float]]:
-        """Get the 6 corner positions of a hex."""
+        """
+        Get the 6 corner positions of a hex.
+        Uses pointy-top orientation with corners starting at top.
+        """
         cx, cy = self._hex_to_pixel(q, r, size)
         corners = []
         for i in range(6):
-            angle = math.pi / 3 * i - math.pi / 6
+            angle = math.pi / 3 * i - math.pi / 2  # Start at top (-90 deg)
             corner_x = cx + size * math.cos(angle)
             corner_y = cy + size * math.sin(angle)
-            corners.append((round(corner_x, 2), round(corner_y, 2)))
+            # Round to 1 decimal for reliable comparisons
+            corners.append((round(corner_x, 1), round(corner_y, 1)))
         return corners
     
     def _build_graph(self):
         """
         Build the intersection graph by finding unique corners.
         Each hex has 6 corners; shared corners become single intersections.
-        Uses epsilon comparison for robust floating-point handling.
+        Uses grid-based bucketing for reliable node merging.
+        
+        A standard Catan board has 54 unique intersections.
         """
-        EPSILON = 0.5  # Tolerance for coordinate comparison
+        # Grid bucket size for merging - coordinates are rounded to this precision
+        GRID_SIZE = 1.0
         
-        def find_existing_node(x: float, y: float) -> Optional[int]:
-            """Find an existing node within epsilon distance."""
-            for node_id, node in self.intersections.items():
-                if abs(node.x - x) < EPSILON and abs(node.y - y) < EPSILON:
-                    return node_id
-            return None
+        def coord_key(x: float, y: float) -> Tuple[int, int]:
+            """Create a grid bucket key for coordinates."""
+            return (round(x / GRID_SIZE), round(y / GRID_SIZE))
         
+        # Map grid keys to node IDs
+        coord_to_node: Dict[Tuple[int, int], int] = {}
         next_id = 0
-        node_lookup: Dict[int, Tuple[float, float]] = {}  # node_id -> (x, y)
         
-        # For each tile, get its corners
+        # For each tile, get its corners and map to nodes
         tile_corners: Dict[Tuple[int, int], List[Tuple[float, float]]] = {}
-        corner_to_node: Dict[Tuple[int, int], Dict[int, int]] = {}  # (q,r) -> {corner_idx: node_id}
+        tile_corner_nodes: Dict[Tuple[int, int], List[int]] = {}  # (q,r) -> [node_ids for 6 corners]
         
         for (q, r), tile in self.tiles.items():
             corners = self._get_hex_corners(q, r)
             tile_corners[(q, r)] = corners
-            corner_to_node[(q, r)] = {}
+            tile_corner_nodes[(q, r)] = []
             
-            for corner_idx, corner in enumerate(corners):
+            for corner in corners:
                 cx, cy = corner
+                key = coord_key(cx, cy)
                 
-                # Find existing node within epsilon
-                existing_id = find_existing_node(cx, cy)
-                
-                if existing_id is not None:
-                    node_id = existing_id
+                if key in coord_to_node:
+                    # Use existing node
+                    node_id = coord_to_node[key]
                 else:
                     # Create new node
                     node_id = next_id
+                    coord_to_node[key] = node_id
                     self.intersections[node_id] = Intersection(
                         id=node_id,
                         x=cx,
                         y=cy
                     )
-                    node_lookup[node_id] = (cx, cy)
                     next_id += 1
                 
-                corner_to_node[(q, r)][corner_idx] = node_id
+                tile_corner_nodes[(q, r)].append(node_id)
         
         # Assign touching tiles to each intersection
-        for (q, r), corners in tile_corners.items():
+        for (q, r) in tile_corners.keys():
             tile = self.tiles[(q, r)]
-            for corner_idx in range(6):
-                node_id = corner_to_node[(q, r)][corner_idx]
+            for node_id in tile_corner_nodes[(q, r)]:
                 if tile not in self.intersections[node_id].touching_tiles:
                     self.intersections[node_id].touching_tiles.append(tile)
         
         # Build neighbor connections (edges of hexes)
-        for (q, r), corners in tile_corners.items():
+        for (q, r) in tile_corners.keys():
+            node_ids = tile_corner_nodes[(q, r)]
             for i in range(6):
-                id_a = corner_to_node[(q, r)][i]
-                id_b = corner_to_node[(q, r)][(i + 1) % 6]
+                id_a = node_ids[i]
+                id_b = node_ids[(i + 1) % 6]
+                
+                # Skip if same node (shouldn't happen but safety check)
+                if id_a == id_b:
+                    continue
                 
                 # Add neighbor relationship
                 if id_b not in self.intersections[id_a].neighbors:
