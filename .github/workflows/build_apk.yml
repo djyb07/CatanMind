@@ -22,50 +22,52 @@ jobs:
       with:
         python-version: '3.11'
     
-    # 3. Setup Flutter (MUST be before flet build)
+    # 3. Setup Flutter
     - name: Set up Flutter
       uses: subosito/flutter-action@v2
       with:
         channel: 'stable'
     
-    # 4. Verify Flutter installation
+    # 4. Accept Android Licenses (Required for non-interactive build)
+    - name: Accept Android Licenses
+      run: |
+        yes | flutter doctor --android-licenses || true
+    
+    # 5. Verify Flutter
     - name: Verify Flutter
       run: |
         flutter --version
         flutter doctor -v
     
-    # 5. Install Python Dependencies
+    # 6. Install Python Dependencies
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
         pip install flet
         pip install -r requirements.txt
     
-    # 6. Generate assets
+    # 7. Generate assets
     - name: Generate assets
       run: |
         python utils/generate_assets.py
     
-    # 7. Build Android APK
-    - name: Build Android APK
+    # 8. Build Android APK (use --module-name for app.py)
+    - name: Build APK
       run: |
-        flet build apk \
-          --project "CatanMind" \
-          --org "com.catanmind" \
-          --product "CatanMind AI" \
-          --build-version "1.0.0" \
-          --build-number "1"
+        flet build apk --module-name app --include-packages flet
     
-    # 8. Upload APK artifact
+    # 9. Find and upload APK artifact
     - name: Upload APK artifact
       uses: actions/upload-artifact@v4
       with:
         name: CatanMind-APK
-        path: build/apk/*.apk
+        path: |
+          build/apk/*.apk
+          dist/*.apk
         retention-days: 30
         if-no-files-found: warn
     
-    # 9. Upload build logs on failure
+    # 10. Upload build logs on failure
     - name: Upload build logs on failure
       if: failure()
       uses: actions/upload-artifact@v4
@@ -73,5 +75,6 @@ jobs:
         name: build-logs
         path: |
           build/
+          dist/
           *.log
         retention-days: 7
