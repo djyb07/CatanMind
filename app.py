@@ -141,7 +141,7 @@ class BoardRenderer:
                 ax.text(x, y, str(tile.dice_number), ha='center', va='center',
                        fontsize=13, fontweight='bold', color=c, zorder=6)
             if tile.has_robber:
-                ax.text(x, y, "🏴‍☠️", ha='center', va='center', fontsize=18, zorder=6)
+                ax.text(x, y, "R", ha='center', va='center', fontsize=20, fontweight='bold', color='red', zorder=6)
 
         # 2. Draw Roads
         for path in self.board.paths:
