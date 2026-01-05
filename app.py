@@ -1055,10 +1055,31 @@ class CatanMindApp:
 
 
 def main(page: ft.Page):
-    """Main entry point for Flet app."""
+    """Main entry point with Error Reporting."""
     page.window.width = 400
     page.window.height = 850
-    CatanMindApp(page)
+    
+    try:
+        # Attempt to launch the app
+        CatanMindApp(page)
+    except Exception as e:
+        # If it crashes, show the error on screen!
+        import traceback
+        error_msg = traceback.format_exc()
+        
+        page.bgcolor = "black"
+        page.scroll = ft.ScrollMode.AUTO
+        page.clean()
+        page.add(
+            ft.Column([
+                ft.Text("⚠️ APP CRASHED ⚠️", size=30, color="red", weight="bold"),
+                ft.Text("Please screenshot this and send to developer:", color="white"),
+                ft.Divider(color="white"),
+                ft.Text(error_msg, color="red", font_family="monospace", selectable=True)
+            ])
+        )
+        page.update()
+        print(error_msg)  # Fallback for local run
 
 
 if __name__ == "__main__":
