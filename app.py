@@ -143,7 +143,7 @@ class BoardRenderer:
             
             hex_patch = RegularPolygon(
                 (x, y), numVertices=6, radius=self.HEX_SIZE,
-                orientation=math.pi/6,
+                orientation=0,  # Fixed rotation for alignment
                 facecolor=color, edgecolor='#333333', linewidth=2
             )
             ax.add_patch(hex_patch)
