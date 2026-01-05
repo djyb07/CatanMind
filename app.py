@@ -467,30 +467,33 @@ class CatanMindApp:
             
             # Button size based on state
             if node.owner is not None:
-                btn_size = 24 if node.building_type == BuildingType.CITY else 20
+                btn_size = 28 if node.building_type == BuildingType.CITY else 24
                 btn_color = PLAYER_COLORS.get(node.owner, "#ffffff")
-                opacity = 0.7
             elif node_id in recommended_ids:
-                btn_size = 26
+                btn_size = 30
                 btn_color = COLORS["primary"]
-                opacity = 0.5
             else:
-                btn_size = 20
-                btn_color = "transparent"
-                opacity = 0.01  # Nearly invisible but still clickable
+                btn_size = 22
+                btn_color = "#555555"  # Visible gray for all nodes
             
-            # Create overlay button
-            overlay = ft.Container(
-                content=None,
-                width=btn_size,
-                height=btn_size,
-                border_radius=btn_size // 2,
-                bgcolor=btn_color if btn_color != "transparent" else None,
-                border=ft.border.all(3, COLORS["primary"]) if node_id in recommended_ids else None,
+            # Create overlay button using GestureDetector for reliable clicks
+            overlay = ft.GestureDetector(
+                content=ft.Container(
+                    width=btn_size,
+                    height=btn_size,
+                    border_radius=btn_size // 2,
+                    bgcolor=btn_color,
+                    border=ft.Border(
+                        left=ft.BorderSide(3, COLORS["primary"]),
+                        right=ft.BorderSide(3, COLORS["primary"]),
+                        top=ft.BorderSide(3, COLORS["primary"]),
+                        bottom=ft.BorderSide(3, COLORS["primary"])
+                    ) if node_id in recommended_ids else None,
+                    opacity=0.8 if node.owner or node_id in recommended_ids else 0.4,
+                ),
+                on_tap=lambda e, nid=node_id: self._on_node_clicked(nid),
                 left=screen_x - btn_size / 2,
                 top=screen_y - btn_size / 2,
-                on_click=lambda e, nid=node_id: self._on_node_clicked(nid),
-                opacity=opacity,
             )
             controls.append(overlay)
         
