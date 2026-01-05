@@ -54,7 +54,7 @@ jobs:
     # 8. Build Android APK (use --module-name for app.py)
     - name: Build APK
       run: |
-        flet build apk --module-name app --include-packages flet
+        flet build apk --module-name app
     
     # 9. Find and upload APK artifact
     - name: Upload APK artifact
