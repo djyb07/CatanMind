@@ -59,18 +59,18 @@ class BoardRenderer:
     """Renders the board as a matplotlib figure and returns a base64 PNG."""
     
     BOARD_SIZE = 350
-    # FIX: HEX_SIZE must match the default size=50.0 used in models.py!
+    # FIX: HEX_SIZE matches models.py default (50.0)
     HEX_SIZE = 50  
     
     def __init__(self, board: Board):
         self.board = board
-        # FIX: Hardcoded viewport bounds for absolute stability
-        # A standard Catan board fits comfortably within +/- 250 units
+        # FIX: Hardcoded viewport bounds based on your Diagnostic Script results
+        # Diagnostic showed nodes fit perfectly in [-250, 250]
         self.view_min_x = -250
         self.view_max_x = 250
         self.view_min_y = -250
         self.view_max_y = 250
-        self.view_size = 500  # 250 - (-250)
+        self.view_size = 500  # Total span
 
     def get_render_params(self) -> Dict:
         """Required by UI to set container size."""
@@ -127,10 +127,12 @@ class BoardRenderer:
             if tile.has_robber:
                 color = "#333333"
             
-            # Pointy Top orientation (30 degrees)
+            # FIX IS HERE: orientation=math.pi/6 ensures "Pointy Top"
+            # This matches the coordinate math from models.py
             ax.add_patch(RegularPolygon(
                 (x, y), numVertices=6, radius=self.HEX_SIZE,
-                orientation=math.pi/6, facecolor=color, edgecolor='#222222', linewidth=2
+                orientation=math.pi/6,  # 30 degrees = Pointy Top
+                facecolor=color, edgecolor='#222222', linewidth=2
             ))
             
             if tile.dice_number > 0 and not tile.has_robber:
@@ -172,7 +174,7 @@ class BoardRenderer:
             elif highlighted_nodes and nid in highlighted_nodes:
                 ax.add_patch(plt.Circle((node.x, node.y), 8, color='#ffc107', zorder=15))
 
-        # FIX: Apply the fixed 500x500 viewport
+        # FIX: Apply the fixed 500x500 viewport matching the math
         ax.set_xlim(self.view_min_x, self.view_max_x)
         ax.set_ylim(self.view_min_y, self.view_max_y)
         ax.axis('off')
