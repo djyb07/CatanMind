@@ -77,6 +77,14 @@ class BoardRenderer:
                 all_x.append(cx)
                 all_y.append(cy)
         
+        if not all_x:  # Safety check
+            self.view_min_x = -100
+            self.view_max_x = 100
+            self.view_min_y = -100
+            self.view_max_y = 100
+            self.view_size = 200
+            return
+
         min_x, max_x = min(all_x), max(all_x)
         min_y, max_y = min(all_y), max(all_y)
         
@@ -97,8 +105,18 @@ class BoardRenderer:
         self.view_max_y = center_y + (max_dim / 2)
         self.view_size = max_dim
 
+    def get_render_params(self) -> Dict:
+        """Required by UI to set container size."""
+        return {
+            "width": self.BOARD_SIZE,
+            "height": self.BOARD_SIZE
+        }
+
     def node_to_screen(self, node_id: int) -> Tuple[float, float]:
         """Convert node to screen coordinates."""
+        if node_id not in self.board.intersections:
+            return (0, 0)
+            
         node = self.board.intersections[node_id]
         
         rel_x = (node.x - self.view_min_x) / self.view_size
