@@ -213,7 +213,11 @@ class BoardRenderer:
         # Turn off axis
         ax.axis('off')
         
-        # Save WITHOUT bbox_inches='tight' to ensure strict scaling
+        # CRITICAL FIX: Remove ALL internal matplotlib margins
+        # This forces the content to fill the exact dimensions calculated
+        plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        
+        # Save WITHOUT bbox_inches='tight' (it causes unpredictable shifts)
         buf = io.BytesIO()
         plt.savefig(buf, format='png', dpi=100, 
                    facecolor=COLORS["background"], edgecolor='none')
@@ -437,21 +441,30 @@ class CatanMindApp:
         )
         
         # Action buttons
+        # Action buttons - Professional Style
         self.action_buttons = ft.Column([
             ft.Row([
                 ft.ElevatedButton(
                     "My Settlement",
                     icon=ft.Icons.HOME,
                     on_click=lambda e: self._show_node_action_sheet("settlement_self"),
-                    style=ft.ButtonStyle(bgcolor=COLORS["success"]),
-                    width=140
+                    style=ft.ButtonStyle(
+                        bgcolor=ft.colors.GREEN_800, 
+                        color=ft.colors.WHITE,
+                        shape=ft.RoundedRectangleBorder(radius=8),
+                    ),
+                    expand=True
                 ),
                 ft.ElevatedButton(
                     "Enemy Build",
                     icon=ft.Icons.PERSON_OFF,
                     on_click=lambda e: self._show_enemy_build_dialog(),
-                    style=ft.ButtonStyle(bgcolor=COLORS["danger"]),
-                    width=140
+                    style=ft.ButtonStyle(
+                        bgcolor=ft.colors.RED_900, 
+                        color=ft.colors.WHITE,
+                        shape=ft.RoundedRectangleBorder(radius=8),
+                    ),
+                    expand=True
                 ),
             ], alignment=ft.MainAxisAlignment.CENTER),
             ft.Row([
@@ -459,25 +472,35 @@ class CatanMindApp:
                     "My City",
                     icon=ft.Icons.LOCATION_CITY,
                     on_click=lambda e: self._show_node_action_sheet("city_self"),
-                    style=ft.ButtonStyle(bgcolor=COLORS["secondary"]),
-                    width=140
+                    style=ft.ButtonStyle(
+                        bgcolor=COLORS["secondary"], 
+                        color=ft.colors.WHITE,
+                        shape=ft.RoundedRectangleBorder(radius=8),
+                    ),
+                    expand=True
                 ),
                 ft.ElevatedButton(
                     "My Road",
                     icon=ft.Icons.LINEAR_SCALE,
                     on_click=lambda e: self._show_road_dialog(),
-                    style=ft.ButtonStyle(bgcolor=COLORS["secondary"]),
-                    width=140
+                    style=ft.ButtonStyle(
+                        bgcolor=COLORS["secondary"], 
+                        color=ft.colors.WHITE,
+                        shape=ft.RoundedRectangleBorder(radius=8),
+                    ),
+                    expand=True
                 ),
             ], alignment=ft.MainAxisAlignment.CENTER),
-            # Undo button row
+            # Undo button - Outlined for hierarchy
             ft.Row([
-                ft.ElevatedButton(
-                    "↩️ Undo Last",
-                    icon=ft.Icons.UNDO,
+                ft.OutlinedButton(
+                    "↩️ Undo Last Action",
                     on_click=self._on_undo,
-                    style=ft.ButtonStyle(bgcolor="#555555"),
-                    width=290
+                    style=ft.ButtonStyle(
+                        color=ft.colors.GREY_400,
+                        shape=ft.RoundedRectangleBorder(radius=8),
+                    ),
+                    width=200
                 ),
             ], alignment=ft.MainAxisAlignment.CENTER),
         ], spacing=10, visible=False)
