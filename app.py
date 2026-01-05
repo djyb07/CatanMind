@@ -59,7 +59,8 @@ class BoardRenderer:
     """Renders the board as a matplotlib figure and returns a base64 PNG."""
     
     BOARD_SIZE = 350
-    HEX_SIZE = 48
+    # CRITICAL FIX: Must be 50 to match models.py logic
+    HEX_SIZE = 50  
     
     def __init__(self, board: Board):
         self.board = board
@@ -70,31 +71,33 @@ class BoardRenderer:
         all_x = []
         all_y = []
         
-        # Calculate bounds using the CORRECTED coordinate system
+        # Calculate bounds using the vertices of all tiles
         for (q, r) in self.board.tiles.keys():
+            # Use the internal _get_hex_corners from board logic to ensure match
             corners = self.board._get_hex_corners(q, r, self.HEX_SIZE)
             for cx, cy in corners:
                 all_x.append(cx)
                 all_y.append(cy)
         
-        if not all_x:  # Safety check
-            self.view_min_x = -100
-            self.view_max_x = 100
-            self.view_min_y = -100
-            self.view_max_y = 100
-            self.view_size = 200
+        if not all_x:
+            # Fallback defaults
+            self.view_min_x = -150
+            self.view_max_x = 150
+            self.view_min_y = -150
+            self.view_max_y = 150
+            self.view_size = 300
             return
 
         min_x, max_x = min(all_x), max(all_x)
         min_y, max_y = min(all_y), max(all_y)
         
-        # Add padding (stroke width + margin)
-        padding = self.HEX_SIZE * 0.6
+        # Add small padding for stroke width (lines shouldn't be cut off)
+        padding = 4 
         
         width = (max_x - min_x) + (2 * padding)
         height = (max_y - min_y) + (2 * padding)
         
-        # Square the viewport
+        # Force a square viewport to match the Flet Image component (Aspect Ratio 1:1)
         max_dim = max(width, height)
         center_x = (min_x + max_x) / 2
         center_y = (min_y + max_y) / 2
@@ -106,7 +109,6 @@ class BoardRenderer:
         self.view_size = max_dim
 
     def get_render_params(self) -> Dict:
-        """Required by UI to set container size."""
         return {
             "width": self.BOARD_SIZE,
             "height": self.BOARD_SIZE
@@ -119,36 +121,32 @@ class BoardRenderer:
             
         node = self.board.intersections[node_id]
         
+        # Normalize coordinate to 0.0 - 1.0 range based on the view bounds
         rel_x = (node.x - self.view_min_x) / self.view_size
         rel_y = (node.y - self.view_min_y) / self.view_size
         
+        # Map to screen pixels
         screen_x = rel_x * self.BOARD_SIZE
-        screen_y = (1.0 - rel_y) * self.BOARD_SIZE
+        screen_y = (1.0 - rel_y) * self.BOARD_SIZE  # Flet Y is top-down
         return (screen_x, screen_y)
     
     def _hex_to_pixel(self, q: int, r: int, size: float = 50.0) -> tuple:
-        """
-        FIX: Match the Pointy-Top logic from models.py.
-        Old Flat-Top logic caused the 30-degree rotation error.
-        """
+        """Pointy-Top logic matching models.py."""
         x = size * (math.sqrt(3) * q + math.sqrt(3)/2 * r)
         y = size * (3/2 * r)
         return (x, y)
-    
-    def _get_pips(self, number: int) -> int:
-        pips = {2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 8: 5, 9: 4, 10: 3, 11: 2, 12: 1}
-        return pips.get(number, 0)
 
     def render_to_base64(self, 
                          highlighted_nodes: List[int] = None,
                          recommendations: List[PlacementRecommendation] = None) -> str:
-        """Render board with corrected Pointy-Top orientation."""
+        """Render board."""
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
         from matplotlib.patches import RegularPolygon
         
         fig = plt.figure(figsize=(5, 5), facecolor=COLORS["background"])
+        # Use exact [0,0,1,1] axes to fill the figure completely
         ax = fig.add_axes([0, 0, 1, 1], facecolor=COLORS["background"])
         ax.set_aspect('equal')
         
@@ -159,7 +157,7 @@ class BoardRenderer:
             if tile.has_robber:
                 color = "#333333"
             
-            # Pointy Top orientation
+            # Orientation pi/6 (30 deg) = Pointy Top
             ax.add_patch(RegularPolygon(
                 (x, y), numVertices=6, radius=self.HEX_SIZE,
                 orientation=math.pi/6, facecolor=color, edgecolor='#222222', linewidth=2
@@ -184,7 +182,7 @@ class BoardRenderer:
             else:
                 ax.plot([n_a.x, n_b.x], [n_a.y, n_b.y], color='#333333', linewidth=1, zorder=1, alpha=0.3)
 
-        # 3. Draw Nodes
+        # 3. Draw Nodes/Highlights
         rec_ids = set()
         if recommendations:
             for r in recommendations[:3]:
@@ -203,6 +201,7 @@ class BoardRenderer:
             elif highlighted_nodes and nid in highlighted_nodes:
                 ax.add_patch(plt.Circle((node.x, node.y), 8, color='#ffc107', zorder=15))
 
+        # Apply exact calculated bounds
         ax.set_xlim(self.view_min_x, self.view_max_x)
         ax.set_ylim(self.view_min_y, self.view_max_y)
         ax.axis('off')
