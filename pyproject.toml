@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+# Put the repository root on sys.path so `pytest` finds the `catanmind`
+# package. Without this only `python -m pytest` works, because that form adds
+# the working directory itself — CI runs the bare command and would fail to
+# collect anything.
+pythonpath = ["."]
+testpaths = ["tests"]

@@ -55,12 +55,12 @@ If you want to build locally:
 # Install dependencies
 pip install -r requirements.txt
 
-# Generate assets
-python utils/generate_assets.py
-
 # Build APK
-flet build apk --project "CatanMind"
+flet build apk --module-name app --project "CatanMind"
 ```
+
+`assets/icon.png` and `assets/splash.png` are committed, so there is no asset
+generation step to run.
 
 The APK will be in `build/apk/`.
 
@@ -71,20 +71,28 @@ The APK will be in `build/apk/`.
 ```
 CatanMind/
 ├── .github/workflows/
-│   └── build_apk.yml      # CI/CD pipeline
+│   └── build_apk.yml       # CI/CD pipeline: tests, then the APK
 ├── assets/
-│   ├── icon.png           # App icon (auto-generated)
-│   └── splash.png         # Splash screen (auto-generated)
-├── utils/
-│   └── generate_assets.py # Asset generator script
-├── app.py                 # Main Flet application
-├── models.py              # Data models
-├── heuristics.py          # AI scoring
-├── resource_tracker.py    # Card counting
-├── solver_*.py            # AI solvers
-├── requirements.txt       # Python dependencies
-└── DEPLOY.md              # This file
+│   ├── icon.png            # App icon
+│   └── splash.png          # Splash screen
+├── catanmind/
+│   ├── board.py            # Geometry and graph: tiles, nodes, edges, ports
+│   ├── state.py            # All mutable state + the event log behind undo
+│   ├── rules.py            # Legality, longest road, largest army, VP
+│   ├── scoring.py          # What a spot is worth
+│   ├── advisor.py          # What to do next (setup and normal turns)
+│   ├── tracker.py          # What the opponents are probably holding
+│   ├── view.py             # Fitting the board to a screen, and hit-testing
+│   └── ui.py               # The Flet screen
+├── tests/                  # 220 tests, no display required
+├── app.py                  # Entry point
+├── requirements.txt        # Runtime dependency (flet)
+├── requirements-dev.txt    # ...plus pytest
+└── DEPLOY.md               # This file
 ```
+
+Each layer is usable without the one above it, so the engine can be exercised
+head­less — which is how the tests run.
 
 ---
 
@@ -92,8 +100,8 @@ CatanMind/
 
 ### Build fails with "No files found"
 
-1. Check that `utils/generate_assets.py` ran successfully
-2. Ensure `assets/` folder has `icon.png` and `splash.png`
+1. Ensure `assets/` folder has `icon.png` and `splash.png`
+2. Check the build log for the `flet build apk` step
 
 ### APK crashes on device
 

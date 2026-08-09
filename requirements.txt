@@ -1,3 +1,7 @@
-flet>=0.21.0
-matplotlib>=3.7.0
-numpy>=1.24.0
+# The UI draws with flet.canvas, which needs a modern Flet. The 0.8x line
+# replaced page.dialog / page.snack_bar / ft.app(target=) with show_dialog /
+# pop_dialog / ft.run, so an older pin will not run this code.
+flet>=0.86,<0.87
+
+# Nothing else is required at runtime: the engine is pure standard library, and
+# the board is drawn as vector shapes rather than rendered through matplotlib.
