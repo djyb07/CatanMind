@@ -44,6 +44,7 @@ from catanmind.board import (
     pips,
 )
 from catanmind.flow import Action, Step, TurnFlow
+from catanmind import art
 from catanmind.scoring import Scorer
 from catanmind.state import GameState
 from catanmind.tracker import Tracker
@@ -98,15 +99,22 @@ RESOURCE_LABEL: Dict[Optional[Resource], str] = {
     None: "Desert",
 }
 
-#: A one-glyph stand-in for each resource. Reads faster than a word on a chip.
-RESOURCE_GLYPH: Dict[Optional[Resource], str] = {
-    Resource.WOOD: "🌲",
-    Resource.BRICK: "🧱",
-    Resource.SHEEP: "🐑",
-    Resource.WHEAT: "🌾",
-    Resource.ORE: "⛰",
-    None: "🏜",
+#: Vector icons, not emoji. Emoji are drawn by whichever font the device
+#: happens to have, so they change size, weight and even colour between
+#: phones; these are part of the app and look the same everywhere.
+RESOURCE_ICON: Dict[Optional[Resource], object] = {
+    Resource.WOOD: ft.Icons.FOREST,
+    Resource.BRICK: ft.Icons.VIEW_MODULE,
+    Resource.SHEEP: ft.Icons.PETS,
+    Resource.WHEAT: ft.Icons.GRASS,
+    Resource.ORE: ft.Icons.FILTER_HDR,
+    None: ft.Icons.LANDSCAPE,
 }
+
+
+def resource_icon(resource: Optional[Resource], size: float = 15) -> ft.Icon:
+    return ft.Icon(RESOURCE_ICON[resource], size=size,
+                   color=RESOURCE_COLOR[resource])
 
 PLAYER_COLOR: Dict[int, str] = {
     1: "#e05260", 2: "#3f9ae0", 3: "#46b877", 4: "#e8913c",
@@ -185,9 +193,14 @@ def board_shapes(
     radius = view.hex_radius(board)
 
     shapes += _sea_shapes(board, view)
+    shapes += art.island_shadow(_island_outline(board, view), radius)
 
     # -- tiles ------------------------------------------------------------
-    for coord, tile in board.tiles.items():
+    # Back to front, so a tile's raised edge overlaps the one behind it. That
+    # ordering is what makes the extrusion read as thickness rather than as an
+    # outline: sort by screen y and the island stacks like real pieces.
+    for coord in sorted(board.tiles, key=lambda c: view.tile_xy(board, c)[1]):
+        tile = board.tiles[coord]
         corners = view.tile_corners(board, coord)
         resource, number = tile.resource, tile.number
         known = True
@@ -196,42 +209,21 @@ def board_shapes(
             known = entry is not None
             resource, number = entry if entry else (None, 0)
 
-        fill = RESOURCE_COLOR[resource] if known else SURFACE_HI
-        elements = [cv.Path.MoveTo(*corners[0])]
-        elements += [cv.Path.LineTo(*c) for c in corners[1:]]
-        elements.append(cv.Path.Close())
-        shapes.append(cv.Path(elements=elements, paint=_paint(fill)))
-        shapes.append(
-            cv.Path(elements=elements, paint=_paint("#0d0f16", stroke=2.0))
-        )
-
         cx, cy = view.tile_xy(board, coord)
         if not known:
-            shapes.append(_text(cx, cy, "?", radius * 0.5, MUTED))
+            shapes += art.tile_shapes(
+                corners, (cx, cy), radius, "#1b3d56", None, with_terrain=False
+            )
+            shapes.append(_text(cx, cy, "?", radius * 0.46, "#6f93ac"))
             continue
 
+        shapes += art.tile_shapes(
+            corners, (cx, cy), radius, RESOURCE_COLOR[resource], resource
+        )
         if number:
-            hot = number in (6, 8)
-            shapes.append(cv.Circle(cx, cy, radius * 0.30, paint=_paint("#f4efe2")))
-            shapes.append(
-                cv.Circle(cx, cy, radius * 0.30, paint=_paint("#0d0f16", stroke=1.5))
+            shapes += art.number_token(
+                (cx, cy), radius * 0.30, number, pips(number)
             )
-            shapes.append(
-                _text(cx, cy - radius * 0.04, str(number), radius * 0.32,
-                      "#c62828" if hot else "#1a1a1a")
-            )
-            dots = pips(number)
-            spacing = radius * 0.075
-            start = cx - spacing * (dots - 1) / 2
-            for i in range(dots):
-                shapes.append(
-                    cv.Circle(
-                        start + i * spacing, cy + radius * 0.19, radius * 0.022,
-                        paint=_paint("#c62828" if hot else "#1a1a1a"),
-                    )
-                )
-        elif resource is None:
-            shapes.append(_text(cx, cy, "Desert", radius * 0.20, "#6b5f43"))
 
     # -- tappable tiles ----------------------------------------------------
     for coord in legal_tiles:
@@ -304,13 +296,9 @@ def board_shapes(
     # -- roads -------------------------------------------------------------
     for edge_id, owner in state.roads.items():
         edge = board.edge(edge_id)
-        ax, ay = view.node_xy(board, edge.a)
-        bx, by = view.node_xy(board, edge.b)
-        shapes.append(
-            cv.Line(ax, ay, bx, by, paint=_paint("#0d0f16", stroke=9.0))
-        )
-        shapes.append(
-            cv.Line(ax, ay, bx, by, paint=_paint(PLAYER_COLOR[owner], stroke=6.0))
+        shapes += art.road(
+            view.node_xy(board, edge.a), view.node_xy(board, edge.b),
+            max(4.0, radius * 0.13), PLAYER_COLOR[owner],
         )
 
     for edge_id in highlight_edges:
@@ -323,48 +311,81 @@ def board_shapes(
 
     # -- the robber --------------------------------------------------------
     rx, ry = view.tile_xy(board, state.robber)
-    shapes.append(cv.Circle(rx, ry, radius * 0.24, paint=_paint("#1a1a1a")))
-    shapes.append(
-        cv.Circle(rx, ry, radius * 0.24, paint=_paint("#e8eaf0", stroke=2.0))
-    )
-    shapes.append(_text(rx, ry, "R", radius * 0.26, "#ffffff"))
+    shapes += art.robber((rx, ry - radius * 0.10), radius * 0.26)
 
     # -- tappable intersections -------------------------------------------
     for node_id in legal_nodes:
         x, y = view.node_xy(board, node_id)
         shapes.append(
-            cv.Circle(x, y, radius * 0.13, paint=_paint("#8cffc85c"))
+            cv.Circle(x, y, radius * 0.15, paint=_paint(art.alpha(ACCENT, 0.30)))
+        )
+        shapes.append(
+            cv.Circle(x, y, radius * 0.15,
+                      paint=_paint(art.alpha(ACCENT, 0.85), stroke=1.6))
         )
 
     # -- buildings ---------------------------------------------------------
-    for node_id, (owner, kind) in state.buildings.items():
+    # Painted back to front so a piece lower on the board sits in front of one
+    # behind it, the same reason the tiles are ordered.
+    for node_id, (owner, kind) in sorted(
+        state.buildings.items(), key=lambda item: view.node_xy(board, item[0])[1]
+    ):
         x, y = view.node_xy(board, node_id)
         colour = PLAYER_COLOR[owner]
-        size = radius * (0.22 if kind is Building.CITY else 0.16)
-        shapes.append(
-            cv.Rect(x - size, y - size, size * 2, size * 2, 3, paint=_paint(colour))
-        )
-        shapes.append(
-            cv.Rect(
-                x - size, y - size, size * 2, size * 2, 3,
-                paint=_paint("#0d0f16", stroke=2.0),
-            )
-        )
         if kind is Building.CITY:
-            shapes.append(_text(x, y, "C", size * 1.1, "#ffffff"))
+            shapes += art.city((x, y), radius * 0.22, colour)
+        else:
+            shapes += art.settlement((x, y), radius * 0.19, colour)
 
     # -- the advisor's picks, numbered ------------------------------------
     for rank, node_id in enumerate(highlight_nodes):
         x, y = view.node_xy(board, node_id)
-        shapes.append(cv.Circle(x, y, radius * 0.25, paint=_paint("#1a1a1a")))
+        badge = radius * 0.26
         shapes.append(
-            cv.Circle(x, y, radius * 0.25, paint=_paint(ACCENT, stroke=3.0))
+            cv.Shadow(
+                path=[cv.Path.Oval(x - badge, y - badge + badge * 0.2,
+                                   badge * 2, badge * 2)],
+                color=art.alpha("000000", 0.55), elevation=badge * 0.6,
+            )
         )
-        shapes.append(_text(x, y, str(rank + 1), radius * 0.28, ACCENT))
+        shapes.append(
+            cv.Circle(x, y, badge, paint=ft.Paint(
+                gradient=ft.PaintRadialGradient(
+                    center=ft.Offset(x - badge * 0.35, y - badge * 0.4),
+                    radius=badge * 1.8,
+                    colors=[art.shade(ACCENT, 0.35), ACCENT,
+                            art.shade(ACCENT, -0.25)],
+                    color_stops=[0.0, 0.55, 1.0],
+                ),
+                style=ft.PaintingStyle.FILL,
+            ))
+        )
+        shapes.append(
+            cv.Circle(x, y, badge,
+                      paint=_paint(art.alpha("000000", 0.35), stroke=badge * 0.12))
+        )
+        shapes.append(_text(x, y, str(rank + 1), badge * 1.15, ON_ACCENT))
 
     if show_node_ids:
         shapes += _node_id_shapes(board, view)
     return shapes
+
+
+def _island_outline(board: Board, view: Viewport) -> List[Tuple[float, float]]:
+    """
+    The coastline, as a ring of points.
+
+    Walking the coastal edges gives the true silhouette, which is what the
+    island's drop shadow is cast from — a bounding shape would leave shadow
+    hanging in the bays.
+    """
+    ring: List[Tuple[float, float]] = []
+    for edge_id in board.coastal_ring:
+        edge = board.edge(edge_id)
+        point = view.node_xy(board, edge.a)
+        if not ring or ring[-1] != point:
+            ring.append(point)
+    return ring or [view.to_screen(0, 0)]
 
 
 def _sea_shapes(board: Board, view: Viewport) -> List[cv.Shape]:
@@ -438,7 +459,7 @@ def tile_chip(resource: Optional[Resource], number: int) -> ft.Container:
     return ft.Container(
         content=ft.Row(
             [
-                ft.Text(RESOURCE_GLYPH[resource], size=12),
+                resource_icon(resource, 15),
                 ft.Text(
                     RESOURCE_LABEL[resource] if resource else "Desert",
                     size=11.5, color=TEXT, weight=ft.FontWeight.W_500,
@@ -470,15 +491,37 @@ def label(text: str) -> ft.Text:
                    weight=ft.FontWeight.BOLD)
 
 
+#: Cards sit above the page rather than being painted on it. A soft, wide
+#: shadow with a slight downward offset reads as elevation; a hard one reads
+#: as a mistake.
+CARD_SHADOW = ft.BoxShadow(
+    spread_radius=0, blur_radius=18,
+    color="#4d000000", offset=ft.Offset(0, 6),
+)
+
+LIFT_SHADOW = ft.BoxShadow(
+    spread_radius=0, blur_radius=22,
+    color="#59000000", offset=ft.Offset(0, 8),
+)
+
+
+def surface_gradient(top: str, bottom: str) -> ft.LinearGradient:
+    """Light from above, matching the board's own lighting."""
+    return ft.LinearGradient(
+        begin=ft.Alignment(0, -1), end=ft.Alignment(0, 1), colors=[top, bottom]
+    )
+
+
 def section(
     title: str, *controls: ft.Control, accent: Optional[str] = None
 ) -> ft.Container:
     """A titled card. ``accent`` draws a coloured spine down the left edge."""
     return ft.Container(
         content=ft.Column([label(title)] + list(controls), spacing=8),
-        bgcolor=SURFACE,
+        gradient=surface_gradient(art.shade(SURFACE, 0.05), SURFACE),
         border_radius=RADIUS_CARD,
         padding=14,
+        shadow=CARD_SHADOW,
         border=(
             ft.Border(left=ft.BorderSide(3, accent)) if accent
             else ft.Border.all(1, LINE)
@@ -534,7 +577,7 @@ def _resource_strip() -> ft.Control:
             ft.Container(
                 content=ft.Column(
                     [
-                        ft.Text(RESOURCE_GLYPH[r], size=17),
+                        resource_icon(r, 20),
                         ft.Text(RESOURCE_LABEL[r], size=9.5, color=MUTED),
                     ],
                     spacing=2,
@@ -1482,7 +1525,9 @@ class CatanMind:
                 ],
                 spacing=8,
             ),
-            bgcolor=SURFACE_HI, border_radius=10, padding=10,
+            gradient=surface_gradient(art.shade(SURFACE_HI, 0.06), SURFACE_HI),
+            border_radius=12, padding=12, shadow=CARD_SHADOW,
+            border=ft.Border.all(1, art.shade(SURFACE_HI, 0.10)),
         )
 
     def _setup_road_advice(self) -> ft.Control:
@@ -1536,8 +1581,16 @@ class CatanMind:
                 ],
                 spacing=4,
             ),
-            bgcolor=SURFACE_HI if a.affordable else "#10222f",
-            border_radius=10, padding=10,
+            gradient=(
+                surface_gradient(art.shade(SURFACE_HI, 0.06), SURFACE_HI)
+                if a.affordable else None
+            ),
+            bgcolor=None if a.affordable else "#10222f",
+            border_radius=12, padding=12,
+            shadow=CARD_SHADOW if a.affordable else None,
+            border=ft.Border.all(
+                1, art.shade(SURFACE_HI, 0.10) if a.affordable else LINE
+            ),
         )
 
     def _robber_advice(self) -> ft.Control:

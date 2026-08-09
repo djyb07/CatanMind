@@ -18,7 +18,7 @@ from catanmind.ui import (
     BUTTON_STYLE,
     CatanMind,
     RESOURCE_COLOR,
-    RESOURCE_GLYPH,
+    RESOURCE_ICON,
     RESOURCE_LABEL,
     TAP_TARGET,
     board_shapes,
@@ -180,11 +180,15 @@ def test_a_disabled_button_looks_disabled():
 # -- the design system is coherent -----------------------------------------
 
 
-def test_every_resource_has_a_colour_a_label_and_a_glyph():
+def test_every_resource_has_a_colour_a_label_and_an_icon():
+    """
+    Icons rather than emoji: an emoji is drawn by whatever font the device
+    has, so it changes size and weight between phones.
+    """
     for resource in list(Resource) + [None]:
         assert RESOURCE_COLOR[resource].startswith("#")
         assert RESOURCE_LABEL[resource]
-        assert RESOURCE_GLYPH[resource]
+        assert RESOURCE_ICON[resource] is not None
 
 
 def test_the_sea_is_drawn_behind_the_island(app):
