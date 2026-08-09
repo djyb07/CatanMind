@@ -15,7 +15,7 @@ and reused; the same search now runs in milliseconds.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from catanmind.board import (
@@ -37,6 +37,7 @@ from catanmind.scoring import (
     _join,
 )
 from catanmind.state import GameState, Phase
+from catanmind.tracker import Tracker
 from catanmind import rules
 
 
@@ -79,6 +80,18 @@ class Advice:
 #: coarser values start discarding the lookahead itself, and with it the
 #: difference between picking first and picking last.
 PAIR_TOLERANCE = 0.5
+
+#: How much a trade is worth by what it buys. A trade that completes a city
+#: matters more than one that completes a road, so the routes stay
+#: comparable across different goals.
+TRADE_GOAL_WEIGHT: Dict[str, float] = {
+    "city": 1.30, "settlement": 1.25, "dev_card": 1.00, "road": 0.90,
+}
+
+#: What one spare card is worth giving up. Trades are priced net of this, which
+#: is why asking a player for a card beats paying the bank four for the same
+#: card: the outcome is identical and it costs three cards less.
+CARD_COST = 1.2
 
 #: Cards per round you can realistically raise by trading a surplus away.
 #: A round of production rarely converts cleanly, so this discounts it.
@@ -233,6 +246,136 @@ def vp_value(state: GameState, player: int) -> float:
     elif leader >= state.target_vp - 3:
         base *= 1.4
     return base
+
+
+# --------------------------------------------------------------------------
+# The through-line
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class Plan:
+    """
+    What this position is actually trying to do.
+
+    Ranking moves one at a time produces a shopping list, not a strategy. Catan
+    positions fall into a handful of recognisable shapes — an ore-and-wheat
+    engine wants cities and development cards, a wood-and-brick engine wants
+    to sprawl — and knowing which one you are in changes which of two
+    similarly-scored moves is the right one.
+
+    :attr:`emphasis` is what makes this more than a caption: it tilts the
+    ranking toward the moves the plan is built on.
+    """
+
+    key: str
+    title: str
+    focus: str
+    reason: str
+    emphasis: Dict[str, float] = field(default_factory=dict)
+
+
+#: How strongly a plan favours its own moves. Deliberately gentle — the plan
+#: breaks ties between comparable moves, it does not override a much better one.
+PLAN_EMPHASIS: Dict[str, Dict[str, float]] = {
+    "cities": {"upgrade_city": 1.30, "buy_dev_card": 1.10},
+    "expansion": {"build_settlement": 1.25, "build_road": 1.20},
+    "development": {"buy_dev_card": 1.35},
+    "longest_road": {"build_road": 1.40},
+    "finish": {
+        "upgrade_city": 1.25, "build_settlement": 1.25, "buy_dev_card": 1.20,
+    },
+    "balanced": {},
+}
+
+
+def strategic_plan(state: GameState, player: int) -> Plan:
+    """
+    Read the position and name the strategy it supports.
+
+    Based on what the player's *engine* produces rather than what happens to
+    be in hand this turn, because a hand empties every time you build and the
+    engine is what you actually have to work with.
+    """
+    income = income_per_round(state, player)
+    ore_wheat = income[Resource.ORE] + income[Resource.WHEAT]
+    wood_brick = income[Resource.WOOD] + income[Resource.BRICK]
+    vp = rules.victory_points(state, player)
+
+    upgradable = len(rules.legal_cities(state, player))
+    room = len(rules.legal_settlements(state, player)) > 0
+    settlements_left = state.remaining(player, "settlement")
+
+    # Within two points of winning, nothing matters except the fastest points.
+    if vp >= state.target_vp - 2:
+        return Plan(
+            key="finish",
+            title="Close it out",
+            focus="Take the fastest points on the board.",
+            reason=(
+                f"You are on {vp} of {state.target_vp}. Stop building the "
+                "engine and buy the points."
+            ),
+            emphasis=PLAN_EMPHASIS["finish"],
+        )
+
+    if ore_wheat > wood_brick * 1.35 and upgradable:
+        return Plan(
+            key="cities",
+            title="Cities and development cards",
+            focus="Upgrade settlements; buy cards with the spare ore.",
+            reason=(
+                "Your engine leans on ore and wheat, which is exactly what "
+                "cities and development cards cost."
+            ),
+            emphasis=PLAN_EMPHASIS["cities"],
+        )
+
+    if ore_wheat > wood_brick * 1.35:
+        return Plan(
+            key="development",
+            title="Development cards",
+            focus="Turn the ore into cards and hunt Largest Army.",
+            reason=(
+                "You produce ore and wheat but have nothing worth upgrading "
+                "yet, so the cards are the better use of it."
+            ),
+            emphasis=PLAN_EMPHASIS["development"],
+        )
+
+    if wood_brick > ore_wheat * 1.35 and (room and settlements_left):
+        return Plan(
+            key="expansion",
+            title="Expand",
+            focus="Lay roads and claim more spots.",
+            reason=(
+                "Wood and brick are what roads and settlements cost, and "
+                "there is still room to build."
+            ),
+            emphasis=PLAN_EMPHASIS["expansion"],
+        )
+
+    if wood_brick > ore_wheat * 1.35:
+        return Plan(
+            key="longest_road",
+            title="Longest Road",
+            focus="Push the road network; the board is full.",
+            reason=(
+                "You make wood and brick but have nowhere left to settle, so "
+                "the two points are in the road."
+            ),
+            emphasis=PLAN_EMPHASIS["longest_road"],
+        )
+
+    return Plan(
+        key="balanced",
+        title="Balanced",
+        focus="Take whichever build is worth most right now.",
+        reason=(
+            "Your production is even, so nothing forces a particular route."
+        ),
+        emphasis=PLAN_EMPHASIS["balanced"],
+    )
 
 
 # --------------------------------------------------------------------------
@@ -551,12 +694,21 @@ class TurnAdvisor:
         weights = PHASE_WEIGHTS[phase]
         vp = vp_value(state, player)
 
+        plan = strategic_plan(state, player)
+
         out: List[Advice] = []
         out += self._settlements(state, player, weights, vp)
         out += self._cities(state, player, weights, vp)
         out += self._roads(state, player, weights, vp)
         out += self._dev_cards(state, player, vp)
-        out += self._trades(state, player)
+        out += self.trade_advice(state, player)
+
+        # The plan tilts the ranking toward the moves it is built on, so two
+        # comparable options resolve the same way a coherent game would.
+        for advice in out:
+            advice.value = round(
+                advice.value * plan.emphasis.get(advice.action, 1.0), 2
+            )
 
         # Look ahead: a move is worth what it gains divided by how long it
         # takes to get there. Without this the engine is purely greedy and
@@ -573,6 +725,11 @@ class TurnAdvisor:
 
         out.sort(key=lambda a: (a.affordable, a.rate), reverse=True)
         return out[:top]
+
+    def plan(self, state: GameState, player: Optional[int] = None) -> Plan:
+        """The strategy the current position supports."""
+        _same_board(self.board, state)
+        return strategic_plan(state, state.me if player is None else player)
 
     # -- individual action families ---------------------------------------
 
@@ -758,44 +915,236 @@ class TurnAdvisor:
             )
         ]
 
-    def _trades(self, state: GameState, player: int) -> List[Advice]:
-        """Suggest a bank/port trade when a surplus is blocking a purchase."""
+    # -- trading -----------------------------------------------------------
+
+    def _goals(
+        self, state: GameState, player: int
+    ) -> List[Tuple[str, Dict[Resource, int]]]:
+        """
+        Every purchase the player is nearly able to make, best first.
+
+        A list rather than a single target: the most valuable goal is often the
+        one a trade cannot reach, and stopping there would leave the player
+        with no advice at all when a cheaper purchase was one card away.
+        """
         hand = state.players[player].hand
+        plan = strategic_plan(state, player)
+        order = {
+            "cities": ("city", "dev_card", "settlement", "road"),
+            "development": ("dev_card", "city", "settlement", "road"),
+            "expansion": ("settlement", "road", "city", "dev_card"),
+            "longest_road": ("road", "settlement", "city", "dev_card"),
+            "finish": ("city", "settlement", "dev_card", "road"),
+            "balanced": ("city", "settlement", "dev_card", "road"),
+        }[plan.key]
+
+        out: List[Tuple[str, Dict[Resource, int]]] = []
+        for item in order:
+            if item in ("settlement", "city", "road"):
+                if state.remaining(player, item) <= 0:
+                    continue
+                spots = {
+                    "settlement": rules.legal_settlements,
+                    "city": rules.legal_cities,
+                    "road": rules.legal_roads,
+                }[item](state, player)
+                if not spots:
+                    continue
+            if item == "dev_card" and state.dev_deck_left() <= 0:
+                continue
+            cost = COSTS[item]
+            short = {
+                r: n - hand.cards[r] for r, n in cost.items()
+                if hand.cards[r] < n
+            }
+            if short and sum(short.values()) <= 2:
+                out.append((item, short))
+        return out
+
+    def _spare_cards(
+        self, state: GameState, player: int, cost: Dict[Resource, int]
+    ) -> Dict[Resource, int]:
+        """Cards the player can give away without breaking the purchase."""
+        hand = state.players[player].hand
+        return {
+            r: hand.cards[r] - cost.get(r, 0)
+            for r in RESOURCES
+            if hand.cards[r] - cost.get(r, 0) > 0
+        }
+
+    def trade_advice(
+        self, state: GameState, player: Optional[int] = None
+    ) -> List[Advice]:
+        """
+        How to get the card that is blocking the plan.
+
+        Two routes. The bank is certain but expensive; another player is cheap
+        but has to agree, so the recommendation weighs how likely they are to
+        hold the card and whether handing them your surplus is safe. Trading
+        the leader exactly what they need is how games are lost, so it is
+        priced in rather than left to the player to notice.
+        """
+        _same_board(self.board, state)
+        player = state.me if player is None else player
+
+        offers: List[Advice] = []
+        for item, short in self._goals(state, player):
+            offers += self._offers_for(state, player, item, short)
+        if not offers:
+            return []
+
+        # Rank across every goal rather than committing to the first one. The
+        # most valuable purchase is often the one no single trade can reach,
+        # and a trade that actually completes a cheaper build beats a trade
+        # that only chips away at an expensive one.
+        offers.sort(key=lambda a: a.value, reverse=True)
+        best_by_route: Dict[str, Advice] = {}
+        for offer in offers:
+            best_by_route.setdefault(offer.action, offer)
+        return sorted(
+            best_by_route.values(), key=lambda a: a.value, reverse=True
+        )
+
+    def _offers_for(
+        self, state: GameState, player: int, item: str,
+        short: Dict[Resource, int],
+    ) -> List[Advice]:
+        """Ways to cover ``short`` and complete ``item`` this turn."""
+        cost = COSTS[item]
+        spare = self._spare_cards(state, player, cost)
+        if not spare:
+            return []
+
         rates = state.ports_of(player)
+        item_name = item.replace("_", " ")
+        weight = TRADE_GOAL_WEIGHT[item]
         out: List[Advice] = []
 
-        for item in ("city", "settlement", "road", "dev_card"):
-            cost = COSTS[item]
-            short = {r: n - hand.cards[r] for r, n in cost.items()
-                     if hand.cards[r] < n}
-            if not short or sum(short.values()) > 1:
-                continue  # only suggest trades that complete a purchase now
-            need = next(iter(short))
-            spare = [
-                r for r in RESOURCES
-                if r not in cost and hand.cards[r] >= rates[r]
-            ] + [
-                r for r in RESOURCES
-                if r in cost and hand.cards[r] - cost[r] >= rates[r]
-            ]
-            if not spare:
-                continue
-            give = min(spare, key=lambda r: rates[r])
-            out.append(
-                Advice(
-                    action="trade_bank",
-                    label=f"Trade {rates[give]}×{give.value} → {need.value}",
-                    value=6.0,
-                    reason=(
-                        f"That completes a {item.replace('_', ' ')} this turn "
-                        f"at {rates[give]}:1."
-                    ),
-                    cost=None,
-                    affordable=True,
-                    urgency="high",
-                )
+        def effect(need: Resource) -> Tuple[str, float, str]:
+            """
+            How much of the purchase this one trade actually unblocks.
+
+            Claiming a trade "finishes a city" when two different cards are
+            missing is simply wrong, and a player who acts on it ends the turn
+            having spent a card for nothing.
+            """
+            left = {r: n for r, n in short.items() if r is not need}
+            if not left:
+                return (f"finishes a {item_name} this turn", 1.0, "high")
+            remaining = _join([f"{n} {r.value}" for r, n in left.items()])
+            return (
+                f"leaves you needing {remaining} for a {item_name}",
+                0.55,
+                "normal",
             )
-            break
+
+        # -- the bank ------------------------------------------------------
+        for need, missing in short.items():
+            affordable_bank = [
+                r for r, count in spare.items() if count >= rates[r] * missing
+            ]
+            if affordable_bank:
+                give = min(affordable_bank, key=lambda r: rates[r])
+                phrase, scale, urgency = effect(need)
+                out.append(
+                    Advice(
+                        action="trade_bank",
+                        label=(
+                            f"Trade {rates[give] * missing}×{give.value} "
+                            f"for {missing}×{need.value}"
+                        ),
+                        value=round(
+                            14.0 * scale * weight
+                            - rates[give] * missing * CARD_COST, 2
+                        ),
+                        reason=(
+                            f"That {phrase} at {rates[give]}:1, and you can "
+                            f"spare the {give.value}."
+                        ),
+                        affordable=True,
+                        urgency=urgency,
+                    )
+                )
+                break
+
+        # -- another player -------------------------------------------------
+        tracker = Tracker(state)
+        leader = max(
+            (rules.victory_points(state, p, include_hidden=False)
+             for p in state.opponents(player)),
+            default=0,
+        )
+
+        best: Optional[Advice] = None
+        best_score = 0.0
+        for need, missing in short.items():
+            for estimate in tracker.all_estimates(exclude=player):
+                other = estimate.player
+                if estimate.total == 0:
+                    continue
+                chance = estimate.chance_of(need)
+                if chance <= 0:
+                    continue
+
+                # Offer what we least need and they most likely want.
+                their_gaps = rules.expected_yield(state, other, ignore_robber=True)
+                def offer_rank(resource: Resource) -> float:
+                    scarcity_for_them = 1.0 if their_gaps[resource] < COVERAGE_FLOOR else 0.0
+                    return -(scarcity_for_them * 2.0 - self.scorer.values[resource])
+
+                candidates = [r for r, count in spare.items() if count >= missing]
+                if not candidates:
+                    continue
+                give = min(candidates, key=offer_rank)
+
+                their_vp = rules.victory_points(state, other, include_hidden=False)
+                danger = 0.0
+                if their_vp >= state.target_vp - 2:
+                    danger = 0.75
+                elif their_vp >= leader and their_vp >= state.target_vp - 3:
+                    danger = 0.4
+
+                phrase, scale, urgency = effect(need)
+                score = (
+                    12.0 * chance * (1.0 - danger) * scale * weight
+                    - missing * CARD_COST
+                )
+                if score <= best_score:
+                    continue
+
+                reason = (
+                    f"That {phrase}. Player {other} shows "
+                    f"{estimate.describe()}, so about a {chance:.0%} chance "
+                    f"they hold {need.value}."
+                )
+                if their_gaps[give] < COVERAGE_FLOOR:
+                    reason += (
+                        f" They produce no {give.value}, which gives them a "
+                        "reason to say yes."
+                    )
+                if danger >= 0.75:
+                    reason += (
+                        f" Careful — Player {other} is on {their_vp} points; "
+                        "only trade if it wins you the game first."
+                    )
+                elif danger:
+                    reason += f" Player {other} is the one to watch, at {their_vp} points."
+
+                best = Advice(
+                    action="trade_player",
+                    label=(
+                        f"Ask Player {other} for {missing}×{need.value}, "
+                        f"offer {missing}×{give.value}"
+                    ),
+                    value=round(score, 2),
+                    reason=reason,
+                    affordable=True,
+                    urgency=urgency if danger < 0.75 else "normal",
+                )
+                best_score = score
+
+        if best is not None:
+            out.append(best)
         return out
 
     # -- robber ------------------------------------------------------------

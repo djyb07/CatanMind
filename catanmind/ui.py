@@ -1123,7 +1123,39 @@ class CatanMind:
             return self._panel(
                 [section("Game over", ft.Text(flow.banner(), size=14, color=TEXT))]
             )
-        return self._panel([self._turn_advice(), self._alerts()])
+        return self._panel(
+            [self._strategy_card(), self._turn_advice(), self._alerts()]
+        )
+
+    def _strategy_card(self) -> ft.Control:
+        """
+        The through-line, above the move list.
+
+        A ranked list of moves answers "what now"; this answers "what am I
+        playing for", which is the question that makes the list make sense.
+        """
+        plan = self.turn_advisor.plan(self.state, self.me)
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Icon(ft.Icons.FLAG, color=ACCENT, size=16),
+                            ft.Text("Your plan", size=12, color=MUTED,
+                                    weight=ft.FontWeight.BOLD),
+                        ],
+                        spacing=6,
+                    ),
+                    ft.Text(plan.title, size=16, weight=ft.FontWeight.BOLD,
+                            color=TEXT),
+                    ft.Text(plan.focus, size=13, color=ACCENT),
+                    ft.Text(plan.reason, size=12, color=MUTED),
+                ],
+                spacing=4,
+            ),
+            bgcolor=SURFACE, border_radius=12, padding=12,
+            border=ft.Border(left=ft.BorderSide(3, ACCENT)),
+        )
 
     def _panel(self, controls: List[ft.Control]) -> List[ft.Control]:
         """Drop the empty slots; the page scrolls these itself."""

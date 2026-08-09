@@ -366,6 +366,58 @@ def test_cities_are_ranked_by_what_they_actually_add(board, scorer):
     assert checked, "no board produced two upgradeable settlements"
 
 
+def test_settlements_appear_only_once_a_road_reaches_a_legal_spot(
+    board, scorer
+):
+    """
+    Straight after setup every free intersection is either taken or next door
+    to one, so there is genuinely nothing to settle. The advice should be
+    silent then and speak up once the roads reach open ground.
+    """
+    state = GameState(board, num_players=4, me=1)
+    flow = TurnFlow(state)
+    setup_advisor = SetupAdvisor(board, scorer)
+    while flow.in_setup:
+        plan = setup_advisor.recommend(state, flow.current, seat=flow.current,
+                                       top=1)[0]
+        flow.place_setup_settlement(plan.first)
+        options = [
+            e for e in board.node_edges[plan.first] if e not in state.roads
+        ]
+        edge = plan.road if plan.road in options else options[0]
+        flow.place_setup_road(edge)
+    flow.roll(9)
+    empty_hands(state)
+
+    assert rules.legal_settlements(state, 1) == []
+    advisor = TurnAdvisor(board, scorer)
+    give(state, 1, wood=1, brick=1, sheep=1, wheat=1)
+    assert not [
+        a for a in advisor.recommend(state, 1, top=10)
+        if a.action == "build_settlement"
+    ]
+
+    node = state.settlements_of(1)[0]
+    for _ in range(3):
+        nxt = next(
+            (m for m in board.node(node).neighbors
+             if board.edge_id[(node, m)] not in state.roads),
+            None,
+        )
+        if nxt is None:
+            break
+        state.build_road(1, board.edge_id[(node, nxt)], free=True)
+        node = nxt
+
+    assert rules.legal_settlements(state, 1), "roads should have opened a spot"
+    spots = [
+        a for a in advisor.recommend(state, 1, top=10)
+        if a.action == "build_settlement"
+    ]
+    assert spots
+    assert all(a.affordable for a in spots)
+
+
 def test_every_recommended_build_is_legal(state, board, scorer):
     played_setup(state)
     give(state, 1, wood=4, brick=4, sheep=4, wheat=4, ore=4)
