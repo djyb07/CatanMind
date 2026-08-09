@@ -1,3 +1,58 @@
+[project]
+name = "catanmind"
+version = "1.0.0"
+description = "A Catan companion that tells you the best move on your turn."
+requires-python = ">=3.11"
+# What gets installed *into the app bundle*. Keep this to real runtime needs:
+# every entry here is shipped to the phone.
+dependencies = [
+    "flet>=0.86,<0.87",
+]
+
+# --------------------------------------------------------------------------
+# Packaging — read by `flet build`
+# --------------------------------------------------------------------------
+
+[tool.flet]
+# Reverse-domain prefix. Together with `product` this forms the Android
+# application id, which is the app's permanent identity on a device and in
+# the Play Store: changing it later makes a *different* app that cannot
+# update the old one.
+org = "com.catanmind"
+product = "CatanMind"
+company = "CatanMind"
+copyright = "Copyright (c) 2026 CatanMind"
+bundle_id = "com.catanmind.app"
+
+# Bumped on every release. Android refuses to install a build whose number is
+# not higher than the one already on the device.
+build_number = 1
+
+[tool.flet.app]
+# The entry point: `app.py` at the repository root, which starts catanmind.ui.
+module = "app"
+
+[tool.flet.splash]
+# The launch screen, matched to the app's own background so there is no flash
+# of white before the first frame.
+color = "#08131d"
+dark_color = "#08131d"
+
+[tool.flet.android]
+# The circle/squircle launcher icon is composited over this.
+adaptive_icon_background = "#0d2233"
+# One APK for every CPU rather than three. Bigger, but there is a single file
+# to hand round and no way to install the wrong one.
+split_per_abi = false
+
+[tool.flet.web]
+pwa_background_color = "#08131d"
+pwa_theme_color = "#f0b43a"
+
+# --------------------------------------------------------------------------
+# Tests
+# --------------------------------------------------------------------------
+
 [tool.pytest.ini_options]
 # Put the repository root on sys.path so `pytest` finds the `catanmind`
 # package. Without this only `python -m pytest` works, because that form adds

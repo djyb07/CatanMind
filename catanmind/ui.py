@@ -15,6 +15,7 @@ no base64 round-trip — and hit-testing lives in :mod:`catanmind.view`.
 
 from __future__ import annotations
 
+import math
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import flet as ft
@@ -50,25 +51,42 @@ from catanmind.view import Viewport
 from catanmind import rules
 
 # --------------------------------------------------------------------------
-# Palette
+# Palette — "sea and sand"
 # --------------------------------------------------------------------------
+#
+# The colours come from the game's own materials rather than from a generic
+# dark theme: the island sits in deep water, the interface furniture is the
+# sand and timber of the coast, and the five resources keep their board
+# colours so a chip on screen reads as the tile it stands for.
 
-BG = "#12141c"
-SURFACE = "#1b1f2e"
-SURFACE_HI = "#252b3d"
-TEXT = "#e8eaf0"
-MUTED = "#9aa3b8"
-ACCENT = "#ffc85c"
-GOOD = "#4caf50"
-WARN = "#ff7043"
+BG = "#08131d"           # open ocean, the page behind everything
+SEA = "#0d2233"          # the water the island floats in
+SURFACE = "#132c40"      # cards and panels
+SURFACE_HI = "#1b3d56"   # raised, selected, pressed
+LINE = "#25506e"         # hairline borders
+
+TEXT = "#eef5fa"
+MUTED = "#8ba7bf"
+
+ACCENT = "#f0b43a"       # lantern gold: the primary action
+ON_ACCENT = "#0a1622"    # text that sits on top of it
+SAND = "#e6d3a8"         # parchment, for quieter highlights
+
+GOOD = "#3fb383"         # sea green
+WARN = "#e8734a"         # terracotta
+
+#: A move you cannot make yet should read as unavailable at a glance, not as
+#: a slightly different shade of available.
+DISABLED_BG = "#0f2334"
+DISABLED_TEXT = "#4e6c85"
 
 RESOURCE_COLOR: Dict[Optional[Resource], str] = {
-    Resource.WOOD: "#2e6b34",
-    Resource.BRICK: "#b4551f",
-    Resource.SHEEP: "#8bc34a",
-    Resource.WHEAT: "#e0a916",
-    Resource.ORE: "#61758a",
-    None: "#c2b280",
+    Resource.WOOD: "#2f6b3a",     # forest
+    Resource.BRICK: "#b8532c",    # fired clay
+    Resource.SHEEP: "#8dc63f",    # pasture
+    Resource.WHEAT: "#e8b23a",    # ripe field
+    Resource.ORE: "#6b8095",      # slate
+    None: "#d9c39a",              # desert sand
 }
 
 RESOURCE_LABEL: Dict[Optional[Resource], str] = {
@@ -80,13 +98,30 @@ RESOURCE_LABEL: Dict[Optional[Resource], str] = {
     None: "Desert",
 }
 
+#: A one-glyph stand-in for each resource. Reads faster than a word on a chip.
+RESOURCE_GLYPH: Dict[Optional[Resource], str] = {
+    Resource.WOOD: "🌲",
+    Resource.BRICK: "🧱",
+    Resource.SHEEP: "🐑",
+    Resource.WHEAT: "🌾",
+    Resource.ORE: "⛰",
+    None: "🏜",
+}
+
 PLAYER_COLOR: Dict[int, str] = {
-    1: "#e94560", 2: "#2f9bf0", 3: "#43c463", 4: "#f0932b",
+    1: "#e05260", 2: "#3f9ae0", 3: "#46b877", 4: "#e8913c",
 }
 
 #: Height reserved for the board. Fixed so the canvas cannot resize itself in a
-#: loop; everything below it scrolls.
+#: loop; everything below it scrolls. Adjusted to the window in `_board_pane`.
 BOARD_HEIGHT = 340
+
+#: Anything a finger has to hit is at least this tall.
+TAP_TARGET = 44
+
+#: Corner rounding, one step per level of elevation.
+RADIUS_CARD = 16
+RADIUS_CHIP = 999
 
 #: How the ranked recommendations are titled.
 RANK_TITLE: Dict[int, str] = {
@@ -148,6 +183,8 @@ def board_shapes(
     """
     shapes: List[cv.Shape] = []
     radius = view.hex_radius(board)
+
+    shapes += _sea_shapes(board, view)
 
     # -- tiles ------------------------------------------------------------
     for coord, tile in board.tiles.items():
@@ -330,6 +367,43 @@ def board_shapes(
     return shapes
 
 
+def _sea_shapes(board: Board, view: Viewport) -> List[cv.Shape]:
+    """
+    The water the island sits in.
+
+    Drawn as the hex field continuing past the coast, faintly. It costs one
+    outline per empty hex and it is the single strongest cue that this is
+    Catan and not a generic board of coloured shapes.
+    """
+    from catanmind.board import hex_distance
+
+    out: List[cv.Shape] = []
+    faint = _paint("#14304a", stroke=1.0)
+    size = board.SIZE * view.scale
+    corner_angles = [math.radians(60 * i - 90) for i in range(6)]
+    reach = 4
+
+    for q in range(-reach, reach + 1):
+        for r in range(-reach, reach + 1):
+            if hex_distance((q, r), (0, 0)) > reach or (q, r) in board.tiles:
+                continue
+            cx, cy = view.to_screen(*board.tile_center((q, r)))
+            # Anything this far out cannot have a single pixel on screen.
+            if not -size <= cx <= view.width + size:
+                continue
+            if not -size <= cy <= view.height + size:
+                continue
+            corners = [
+                (cx + size * math.cos(a), cy + size * math.sin(a))
+                for a in corner_angles
+            ]
+            elements = [cv.Path.MoveTo(*corners[0])]
+            elements += [cv.Path.LineTo(*c) for c in corners[1:]]
+            elements.append(cv.Path.Close())
+            out.append(cv.Path(elements=elements, paint=faint))
+    return out
+
+
 def _node_id_shapes(board: Board, view: Viewport) -> List[cv.Shape]:
     out: List[cv.Shape] = []
     for node in board.nodes:
@@ -345,47 +419,185 @@ def _node_id_shapes(board: Board, view: Viewport) -> List[cv.Shape]:
 
 def chip(label: str, color: str = SURFACE_HI, text_color: str = TEXT) -> ft.Container:
     return ft.Container(
-        content=ft.Text(label, size=11, color=text_color, weight=ft.FontWeight.BOLD),
+        content=ft.Text(label, size=11.5, color=text_color,
+                        weight=ft.FontWeight.W_600),
         bgcolor=color,
-        padding=ft.Padding(8, 3, 8, 3),
-        border_radius=10,
+        padding=ft.Padding(10, 4, 10, 4),
+        border_radius=RADIUS_CHIP,
     )
 
 
 def tile_chip(resource: Optional[Resource], number: int) -> ft.Container:
-    """A resource/number badge — how a player reads a spot at a glance."""
+    """
+    A resource/number badge — how a player reads a spot at a glance.
+
+    Carries the tile's own colour and the token's own look, red for the two
+    numbers that come up most, so the chip and the board agree.
+    """
     hot = number in (6, 8)
     return ft.Container(
         content=ft.Row(
             [
-                ft.Container(
-                    width=10, height=10, border_radius=2,
-                    bgcolor=RESOURCE_COLOR[resource],
-                ),
+                ft.Text(RESOURCE_GLYPH[resource], size=12),
                 ft.Text(
                     RESOURCE_LABEL[resource] if resource else "Desert",
-                    size=11, color=TEXT,
+                    size=11.5, color=TEXT, weight=ft.FontWeight.W_500,
                 ),
-                ft.Text(
-                    str(number) if number else "—", size=11,
-                    weight=ft.FontWeight.BOLD,
-                    color="#ff8a80" if hot else MUTED,
+                ft.Container(
+                    content=ft.Text(
+                        str(number) if number else "—", size=11,
+                        weight=ft.FontWeight.BOLD,
+                        color="#c62828" if hot else "#1a1a1a",
+                    ),
+                    bgcolor="#f4efe2", width=20, height=20,
+                    border_radius=RADIUS_CHIP,
+                    alignment=ft.Alignment(0, 0),
                 ),
             ],
-            spacing=4, tight=True,
+            spacing=5, tight=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
-        bgcolor=SURFACE_HI, padding=ft.Padding(6, 3, 6, 3), border_radius=8,
+        bgcolor=SURFACE_HI,
+        padding=ft.Padding(8, 4, 6, 4),
+        border_radius=RADIUS_CHIP,
+        border=ft.Border.all(1, RESOURCE_COLOR[resource]),
     )
 
 
-def section(title: str, *controls: ft.Control) -> ft.Container:
+def label(text: str) -> ft.Text:
+    """The small heading above a group. Quiet, never shouting."""
+    return ft.Text(text.upper(), size=10.5, color=MUTED,
+                   weight=ft.FontWeight.BOLD)
+
+
+def section(
+    title: str, *controls: ft.Control, accent: Optional[str] = None
+) -> ft.Container:
+    """A titled card. ``accent`` draws a coloured spine down the left edge."""
     return ft.Container(
-        content=ft.Column(
-            [ft.Text(title, size=12, color=MUTED, weight=ft.FontWeight.BOLD)]
-            + list(controls),
-            spacing=6,
+        content=ft.Column([label(title)] + list(controls), spacing=8),
+        bgcolor=SURFACE,
+        border_radius=RADIUS_CARD,
+        padding=14,
+        border=(
+            ft.Border(left=ft.BorderSide(3, accent)) if accent
+            else ft.Border.all(1, LINE)
         ),
-        bgcolor=SURFACE, border_radius=12, padding=12,
+    )
+
+
+def _wordmark(size: float = 30) -> ft.Control:
+    """
+    The app's name, wearing a hex.
+
+    A small drawn tile rather than an image file: it scales cleanly, needs no
+    asset pipeline, and repeats the shape the whole app is built out of.
+    """
+    badge = size * 1.35
+    hexagon = cv.Canvas(
+        shapes=[
+            cv.Path(
+                elements=(
+                    [cv.Path.MoveTo(
+                        badge / 2 + badge * 0.46 * math.cos(math.radians(-90)),
+                        badge / 2 + badge * 0.46 * math.sin(math.radians(-90)),
+                    )]
+                    + [
+                        cv.Path.LineTo(
+                            badge / 2 + badge * 0.46 * math.cos(math.radians(60 * i - 90)),
+                            badge / 2 + badge * 0.46 * math.sin(math.radians(60 * i - 90)),
+                        )
+                        for i in range(1, 6)
+                    ]
+                    + [cv.Path.Close()]
+                ),
+                paint=_paint(ACCENT),
+            ),
+            _text(badge / 2, badge / 2, "C", size * 0.62, ON_ACCENT),
+        ],
+        width=badge, height=badge,
+    )
+    return ft.Row(
+        [
+            ft.Container(content=hexagon, width=badge, height=badge),
+            ft.Text("CatanMind", size=size, weight=ft.FontWeight.BOLD,
+                    color=TEXT),
+        ],
+        spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+
+
+def _resource_strip() -> ft.Control:
+    """The five resources, as a quiet footer. Sets the game's colours early."""
+    return ft.Row(
+        [
+            ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text(RESOURCE_GLYPH[r], size=17),
+                        ft.Text(RESOURCE_LABEL[r], size=9.5, color=MUTED),
+                    ],
+                    spacing=2,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                bgcolor=SURFACE,
+                border=ft.Border(bottom=ft.BorderSide(3, RESOURCE_COLOR[r])),
+                border_radius=10,
+                padding=ft.Padding(10, 8, 10, 6),
+                expand=True,
+            )
+            for r in RESOURCES
+        ],
+        spacing=6,
+    )
+
+
+#: Every button in the app shares this shape: a full pill, and enough padding
+#: that the tap area clears :data:`TAP_TARGET` without the caller thinking
+#: about it.
+BUTTON_STYLE = ft.ButtonStyle(
+    shape=ft.RoundedRectangleBorder(radius=RADIUS_CHIP),
+    # 14 + 14 either side of a ~17px label clears TAP_TARGET with a pixel to
+    # spare. At 13 it came to 43, which is close enough to feel fine on a
+    # desktop and not quite enough under a thumb.
+    padding=ft.Padding(18, 14, 18, 14),
+)
+
+
+def btn(
+    content=None,
+    *,
+    on_click=None,
+    bgcolor: Optional[str] = None,
+    color: Optional[str] = None,
+    disabled: bool = False,
+    tooltip: Optional[str] = None,
+    primary: bool = False,
+    **kwargs,
+) -> ft.Button:
+    """
+    A button in the app's own shape.
+
+    One helper rather than a style argument repeated at thirty call sites:
+    the padding here is what guarantees a comfortable tap target on a phone,
+    and it should not be possible to forget it.
+    """
+    if primary:
+        bgcolor = bgcolor or ACCENT
+        color = color or ON_ACCENT
+    if disabled:
+        # Explicit, because a bgcolor set here would otherwise override the
+        # theme's own disabled shade and leave the button looking live.
+        bgcolor, color = DISABLED_BG, DISABLED_TEXT
+    return ft.Button(
+        content,
+        on_click=on_click,
+        bgcolor=bgcolor or SURFACE_HI,
+        color=color or TEXT,
+        disabled=disabled,
+        tooltip=tooltip,
+        style=BUTTON_STYLE,
+        **kwargs,
     )
 
 
@@ -408,6 +620,10 @@ class CatanMind:
         self.show_ids = False
         self.canvas_w = 360.0
         self.canvas_h = float(BOARD_HEIGHT)
+        #: Window size, so the board can take a sensible share of it. Set from
+        #: the page on resize; the defaults are a common phone.
+        self.page_height: float = 844.0
+        self.page_width: float = 390.0
 
         self.pending: Dict[Tuple[int, int], Tuple[Optional[Resource], int]] = {}
         self.pending_ports: Dict[int, Port] = dict(enumerate(PORT_POOL))
@@ -465,14 +681,39 @@ class CatanMind:
         self.refresh()
 
     def _board_pane(self, **draw) -> ft.Control:
+        """
+        The island and the water around it.
+
+        Sits on its own darker surface with a hairline coast, so the board
+        reads as a place rather than as another panel in the stack.
+        """
         self.canvas.shapes = board_shapes(
             self.board, self.view,
             None if self.screen == "editor" else self.state,
             show_node_ids=self.show_ids, **draw,
         )
         return ft.Container(
-            content=self.board_holder, bgcolor=BG, height=BOARD_HEIGHT, padding=0,
+            content=self.board_holder,
+            bgcolor=SEA,
+            height=self.board_height,
+            padding=0,
+            border=ft.Border(
+                top=ft.BorderSide(1, LINE), bottom=ft.BorderSide(1, LINE)
+            ),
         )
+
+    @property
+    def board_height(self) -> float:
+        """
+        How tall the board should be on this screen.
+
+        A phone wants roughly two fifths of the height — enough to tap
+        confidently, with the advice still visible underneath. A desktop
+        window has room to spare, so the board is allowed to grow, but never
+        so far that it pushes everything else off the fold.
+        """
+        available = self.page_height or 844
+        return float(max(280, min(520, available * 0.42)))
 
     # ------------------------------------------------------------------
     # Screen 1 — the table
@@ -493,22 +734,26 @@ class CatanMind:
         return ft.Container(
             content=ft.Column(
                 [
-                    ft.Text("CatanMind", size=28, weight=ft.FontWeight.BOLD,
-                            color=TEXT),
+                    ft.Container(height=8),
+                    _wordmark(),
+                    ft.Text(
+                        "Your seat at the table, one move ahead.",
+                        size=14, color=SAND,
+                    ),
                     ft.Text(
                         "Tell me about the table, then tap in the board in "
                         "front of you.",
                         size=13, color=MUTED,
                     ),
-                    ft.Container(height=12),
+                    ft.Container(height=10),
                     section(
                         "How many players?",
                         ft.Row(
                             [
-                                ft.Button(
+                                btn(
                                     str(count),
                                     bgcolor=ACCENT if n == count else SURFACE_HI,
-                                    color="#1a1a1a" if n == count else TEXT,
+                                    color=ON_ACCENT if n == count else TEXT,
                                     on_click=lambda _e, c=count: set_players(c),
                                 )
                                 for count in (3, 4)
@@ -524,7 +769,7 @@ class CatanMind:
                         ),
                         ft.Row(
                             [
-                                ft.Button(
+                                btn(
                                     f"Seat {seat}",
                                     bgcolor=(
                                         PLAYER_COLOR[seat] if self.me == seat
@@ -538,16 +783,27 @@ class CatanMind:
                             wrap=True, spacing=8, run_spacing=8,
                         ),
                     ),
-                    ft.Container(height=12),
-                    ft.Button(
-                        "Next — enter the board",
-                        bgcolor=ACCENT, color="#1a1a1a",
-                        on_click=lambda _e: self._go_editor(),
+                    ft.Container(height=14),
+                    ft.Row(
+                        [
+                            ft.Container(
+                                content=btn(
+                                    "Next — enter the board",
+                                    primary=True,
+                                    on_click=lambda _e: self._go_editor(),
+                                ),
+                                expand=True,
+                            )
+                        ],
                     ),
+                    ft.Container(height=18),
+                    _resource_strip(),
                 ],
                 spacing=10, scroll=ft.ScrollMode.AUTO,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             ),
-            padding=20, expand=True,
+            padding=ft.Padding(20, 16, 20, 20),
+            expand=True,
         )
 
     def _go_editor(self) -> None:
@@ -611,25 +867,26 @@ class CatanMind:
                 ),
                 ft.Row(
                     [
-                        ft.Button("Standard", on_click=self._use_standard,
+                        btn("Standard", on_click=self._use_standard,
                                   bgcolor=SURFACE_HI, color=TEXT),
-                        ft.Button("Random", on_click=self._use_random,
+                        btn("Random", on_click=self._use_random,
                                   bgcolor=SURFACE_HI, color=TEXT),
-                        ft.Button("Clear", on_click=self._clear_board,
+                        btn("Clear", on_click=self._clear_board,
                                   bgcolor=SURFACE_HI, color=TEXT),
-                        ft.Button("Ports", on_click=self._open_port_editor,
+                        btn("Ports", on_click=self._open_port_editor,
                                   bgcolor=SURFACE_HI, color=TEXT),
                     ],
                     wrap=True, spacing=8, run_spacing=8,
                 ),
-                ft.Button(
+                btn(
                     "Start the game", on_click=self._finish_editing,
                     bgcolor=ACCENT if not problems else SURFACE_HI,
-                    color="#1a1a1a" if not problems else MUTED,
+                    color=ON_ACCENT if not problems else MUTED,
                     disabled=bool(problems),
                 ),
             ],
             spacing=10,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
 
         return ft.Column(
@@ -682,7 +939,7 @@ class CatanMind:
 
         def redraw() -> None:
             res_row.controls = [
-                ft.Button(
+                btn(
                     RESOURCE_LABEL[r],
                     bgcolor=RESOURCE_COLOR[r] if chosen["resource"] is r else SURFACE_HI,
                     color="#ffffff" if chosen["resource"] is r else TEXT,
@@ -692,10 +949,10 @@ class CatanMind:
             ]
             desert = chosen["resource"] is None
             num_row.controls = [
-                ft.Button(
+                btn(
                     str(n),
                     bgcolor=ACCENT if chosen["number"] == n else SURFACE_HI,
-                    color="#1a1a1a" if chosen["number"] == n else TEXT,
+                    color=ON_ACCENT if chosen["number"] == n else TEXT,
                     disabled=desert,
                     on_click=lambda _e, n=n: pick_number(n),
                 )
@@ -746,7 +1003,7 @@ class CatanMind:
                 actions=[
                     ft.TextButton("Clear", on_click=clear),
                     ft.TextButton("Cancel", on_click=lambda _e: self._close_dialog()),
-                    ft.Button("Save", on_click=save, bgcolor=ACCENT, color="#1a1a1a"),
+                    btn("Save", on_click=save, bgcolor=ACCENT, color=ON_ACCENT),
                 ],
             )
         )
@@ -806,7 +1063,7 @@ class CatanMind:
                     width=330,
                     content=ft.Row(
                         [
-                            ft.Button(
+                            btn(
                                 label,
                                 bgcolor=(
                                     RESOURCE_COLOR.get(port.resource, ACCENT)
@@ -852,7 +1109,7 @@ class CatanMind:
                             ft.Text(f"Port {slot + 1}", size=11, color=MUTED),
                             ft.Row(
                                 [
-                                    ft.Button(
+                                    btn(
                                         label,
                                         bgcolor=(
                                             RESOURCE_COLOR.get(port.resource, ACCENT)
@@ -882,8 +1139,8 @@ class CatanMind:
                 title=ft.Text("Which port is where?", color=TEXT),
                 content=ft.Container(content=rows, width=330),
                 actions=[
-                    ft.Button("Done", on_click=lambda _e: self._close_dialog(),
-                              bgcolor=ACCENT, color="#1a1a1a")
+                    btn("Done", on_click=lambda _e: self._close_dialog(),
+                              bgcolor=ACCENT, color=ON_ACCENT)
                 ],
             )
         )
@@ -944,8 +1201,9 @@ class CatanMind:
                     content=ft.Column(
                         [self._tab_bar()] + self._tab_body(),
                         spacing=10,
+                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                     ),
-                    padding=ft.Padding(10, 6, 10, 24),
+                    padding=ft.Padding(12, 8, 12, 28),
                 ),
             ],
             spacing=0, expand=True, scroll=ft.ScrollMode.AUTO,
@@ -1014,39 +1272,48 @@ class CatanMind:
                     ],
                     spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                bgcolor="#2b2416", padding=ft.Padding(12, 6, 6, 6),
+                bgcolor="#2a2412", padding=ft.Padding(12, 6, 6, 6),
             )
 
-        buttons: List[ft.Control] = []
-        for action in actions:
-            buttons.append(
-                ft.Button(
-                    action.label,
-                    bgcolor=(
-                        ACCENT if action.primary and action.enabled
-                        else SURFACE_HI
-                    ),
-                    color=(
-                        "#1a1a1a" if action.primary and action.enabled
-                        else (TEXT if action.enabled else MUTED)
-                    ),
-                    disabled=not action.enabled,
-                    tooltip=action.hint or None,
-                    on_click=lambda _e, a=action: self._choose_action(a),
-                )
+        # The expected move goes on its own row at full width; everything else
+        # wraps below it. On a phone that puts the button you almost always
+        # want under your thumb, at a size you cannot miss.
+        primary = [a for a in actions if a.primary and a.enabled]
+        rest = [a for a in actions if a not in primary]
+
+        def button(action: Action, wide: bool = False) -> ft.Control:
+            control = btn(
+                action.label,
+                primary=action.primary and action.enabled,
+                disabled=not action.enabled,
+                tooltip=action.hint or None,
+                on_click=lambda _e, a=action: self._choose_action(a),
             )
+            return ft.Container(content=control, expand=True) if wide else control
+
+        rows: List[ft.Control] = []
+        if primary:
+            rows.append(
+                ft.Row([button(a, wide=True) for a in primary], spacing=8)
+            )
+        if rest:
+            rows.append(
+                ft.Row([button(a) for a in rest], wrap=True, spacing=8,
+                       run_spacing=8)
+            )
+
         note = self.status or (
             "" if flow.is_my_turn()
             else f"Record what Player {flow.current} actually did."
         )
+        if note:
+            rows.append(ft.Text(note, size=11.5, color=MUTED))
+
         return ft.Container(
-            content=ft.Column(
-                [
-                    ft.Row(buttons, wrap=True, spacing=6, run_spacing=6),
-                ] + ([ft.Text(note, size=11, color=MUTED)] if note else []),
-                spacing=6,
-            ),
-            bgcolor=SURFACE, padding=ft.Padding(10, 8, 10, 8),
+            content=ft.Column(rows, spacing=8),
+            bgcolor=SURFACE,
+            padding=ft.Padding(12, 12, 12, 12),
+            border=ft.Border(bottom=ft.BorderSide(1, LINE)),
         )
 
     def _tab_bar(self) -> ft.Control:
@@ -1187,7 +1454,7 @@ class CatanMind:
                     # looks like a mistake.
                     ft.Row(
                         [
-                            chip(str(rank), ACCENT, "#1a1a1a"),
+                            chip(str(rank), ACCENT, ON_ACCENT),
                             ft.Text(
                                 RANK_TITLE.get(rank, f"Option {rank}"), size=15,
                                 weight=ft.FontWeight.BOLD, color=TEXT,
@@ -1253,7 +1520,7 @@ class CatanMind:
                     ft.Row(
                         [
                             chip(str(rank), ACCENT if a.affordable else SURFACE,
-                                 "#1a1a1a" if a.affordable else MUTED),
+                                 ON_ACCENT if a.affordable else MUTED),
                             ft.Text(a.label, size=14, weight=ft.FontWeight.BOLD,
                                     color=TEXT if a.affordable else MUTED,
                                     expand=True),
@@ -1269,7 +1536,7 @@ class CatanMind:
                 ],
                 spacing=4,
             ),
-            bgcolor=SURFACE_HI if a.affordable else "#1e2130",
+            bgcolor=SURFACE_HI if a.affordable else "#10222f",
             border_radius=10, padding=10,
         )
 
@@ -1439,11 +1706,11 @@ class CatanMind:
         rows.append(
             ft.Row(
                 [
-                    ft.Button(
+                    btn(
                         "Node numbers: " + ("on" if self.show_ids else "off"),
                         on_click=self._toggle_ids, bgcolor=SURFACE_HI, color=TEXT,
                     ),
-                    ft.Button("Edit board", on_click=self._back_to_editor,
+                    btn("Edit board", on_click=self._back_to_editor,
                               bgcolor=SURFACE_HI, color=TEXT),
                 ],
                 wrap=True, spacing=8, run_spacing=8,
@@ -1701,9 +1968,9 @@ class CatanMind:
                     width=320,
                     content=ft.Row(
                         [
-                            ft.Button(
+                            btn(
                                 str(n),
-                                bgcolor="#c62828" if n == 7 else SURFACE_HI,
+                                bgcolor=WARN if n == 7 else SURFACE_HI,
                                 color="#ffffff" if n == 7 else TEXT,
                                 on_click=lambda _e, n=n: roll(n),
                             )
@@ -1744,7 +2011,7 @@ class CatanMind:
             self.refresh()
 
         buttons = [
-            ft.Button(
+            btn(
                 card.label, bgcolor=SURFACE_HI, color=TEXT,
                 tooltip=card.blurb,
                 on_click=lambda _e, c=card: buy(c),
@@ -1753,7 +2020,7 @@ class CatanMind:
         ]
         if not mine:
             buttons.append(
-                ft.Button("Unknown", bgcolor=SURFACE_HI, color=MUTED,
+                btn("Unknown", bgcolor=SURFACE_HI, color=MUTED,
                           on_click=lambda _e: buy(None))
             )
 
@@ -1813,7 +2080,7 @@ class CatanMind:
                     width=330,
                     content=ft.Row(
                         [
-                            ft.Button(
+                            btn(
                                 RESOURCE_LABEL[r], bgcolor=RESOURCE_COLOR[r],
                                 color="#ffffff",
                                 on_click=lambda _e, r=r: pick(r),
@@ -1856,7 +2123,7 @@ class CatanMind:
                         color=MUTED),
                 ft.Row(
                     [
-                        ft.Button(
+                        btn(
                             RESOURCE_LABEL[r],
                             bgcolor=(
                                 RESOURCE_COLOR[r] if r in picked else SURFACE_HI
@@ -1884,7 +2151,7 @@ class CatanMind:
                 content=ft.Container(content=body, width=330),
                 actions=[
                     ft.TextButton("Cancel", on_click=lambda _e: self._close_dialog()),
-                    ft.Button("Take them", on_click=confirm, bgcolor=ACCENT,
+                    btn("Take them", on_click=confirm, bgcolor=ACCENT,
                               color="#1a1a1a"),
                 ],
             )
@@ -1908,7 +2175,7 @@ class CatanMind:
                 title=ft.Text(action.label, color=TEXT),
                 content=ft.Row(
                     [
-                        ft.Button(f"Player {p}", bgcolor=PLAYER_COLOR[p],
+                        btn(f"Player {p}", bgcolor=PLAYER_COLOR[p],
                                   color="#ffffff",
                                   on_click=lambda _e, p=p: pick(p))
                         for p in victims
@@ -2002,7 +2269,7 @@ class CatanMind:
             content=ft.Container(content=body, width=330),
             actions=[
                 ft.TextButton("Cancel", on_click=lambda _e: self._close_dialog()),
-                ft.Button("Discard", on_click=confirm, bgcolor=ACCENT,
+                btn("Discard", on_click=confirm, bgcolor=ACCENT,
                           color="#1a1a1a", disabled=True),
             ],
         )
@@ -2077,10 +2344,10 @@ class CatanMind:
         def redraw() -> None:
             tabs = ft.Row(
                 [
-                    ft.Button(
+                    btn(
                         label,
                         bgcolor=ACCENT if mode["kind"] == key else SURFACE_HI,
-                        color="#1a1a1a" if mode["kind"] == key else TEXT,
+                        color=ON_ACCENT if mode["kind"] == key else TEXT,
                         on_click=lambda _e, k=key: set_mode(k),
                     )
                     for key, label in (("bank", "Bank / port"),
@@ -2094,7 +2361,7 @@ class CatanMind:
                     ft.Text("Give", size=12, color=MUTED),
                     ft.Row(
                         [
-                            ft.Button(
+                            btn(
                                 f"{rates[r]}× {RESOURCE_LABEL[r]}",
                                 bgcolor=(RESOURCE_COLOR[r] if bank["give"] is r
                                          else SURFACE_HI),
@@ -2109,7 +2376,7 @@ class CatanMind:
                     ft.Text("Receive", size=12, color=MUTED),
                     ft.Row(
                         [
-                            ft.Button(
+                            btn(
                                 RESOURCE_LABEL[r],
                                 bgcolor=(RESOURCE_COLOR[r] if bank["get"] is r
                                          else SURFACE_HI),
@@ -2126,7 +2393,7 @@ class CatanMind:
                     ft.Text("With", size=12, color=MUTED),
                     ft.Row(
                         [
-                            ft.Button(
+                            btn(
                                 f"Player {p}",
                                 bgcolor=(PLAYER_COLOR[p] if deal["with"] == p
                                          else SURFACE_HI),
@@ -2188,7 +2455,7 @@ class CatanMind:
                 content=ft.Container(content=body, width=330),
                 actions=[
                     ft.TextButton("Cancel", on_click=lambda _e: self._close_dialog()),
-                    ft.Button("Confirm", on_click=confirm, bgcolor=ACCENT,
+                    btn("Confirm", on_click=confirm, bgcolor=ACCENT,
                               color="#1a1a1a"),
                 ],
             )
@@ -2253,7 +2520,26 @@ def main(page: ft.Page) -> None:
     page.padding = 0
     page.theme_mode = ft.ThemeMode.DARK
     page.scroll = None
+    page.theme = ft.Theme(
+        color_scheme_seed=ACCENT,
+        font_family="Roboto",
+        visual_density=ft.VisualDensity.COMFORTABLE,
+    )
 
     app = CatanMind(page)
+
+    def on_resized(_e=None) -> None:
+        """Keep the board's share of the screen right as the window changes."""
+        height = getattr(page, "height", None)
+        width = getattr(page, "width", None)
+        if not height:
+            return
+        if abs(height - app.page_height) < 2:
+            return
+        app.page_height = float(height)
+        app.page_width = float(width or app.page_width)
+        app.refresh()
+
+    page.on_resized = on_resized
     page.add(app.build())
     app.refresh()

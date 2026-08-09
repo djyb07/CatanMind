@@ -1,25 +1,27 @@
 name: Build Android APK
 
+# Runs on every push so a broken build is caught immediately, and can be
+# started by hand from the Actions tab when you just want a fresh APK.
 on:
   push:
-    branches: [ master, main ]
+    branches: [master, main]
   pull_request:
-    branches: [ master, main ]
-  workflow_dispatch:  # Allow manual trigger
+    branches: [master, main]
+  workflow_dispatch:
 
 jobs:
   # The engine is pure Python, so it is tested on its own before anything as
-  # slow as an Android toolchain is set up.
+  # slow as an Android toolchain is set up. A failing test stops the build
+  # instead of producing an APK nobody should install.
   test:
+    name: Tests
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           cache: 'pip'
 
       - name: Install dependencies
@@ -31,60 +33,73 @@ jobs:
         run: pytest -q
 
   build-apk:
+    name: APK
     needs: test
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           cache: 'pip'
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+      # Flet builds through Flutter, which needs a JDK for the Android half.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          cache: true
 
-      - name: Accept Android licenses
+      - name: Accept Android licences
         run: yes | flutter doctor --android-licenses || true
 
-      - name: Verify Flutter
-        run: |
-          flutter --version
-          flutter doctor -v
+      - name: Report toolchain
+        run: flutter doctor -v
 
-      # Only requirements.txt, so the Flet version the APK is built against is
-      # the pinned one. A bare `pip install flet` here used to resolve to
-      # whatever was newest and silently disagree with the pin.
+      # Only requirements.txt, so the APK is built against the pinned Flet.
+      # A bare `pip install flet` here used to resolve to whatever was newest
+      # and silently disagree with the pin.
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Build APK
-        run: flet build apk --module-name app
+      # Everything else — app id, name, icon, splash — comes from
+      # pyproject.toml, so this command stays the same as the app changes.
+      - name: Build the APK
+        run: flet build apk --verbose
 
-      - name: Upload APK artifact
+      - name: Find the APK
+        id: apk
+        run: |
+          path=$(find build dist -name '*.apk' -print -quit 2>/dev/null || true)
+          if [ -z "$path" ]; then
+            echo "No APK produced" >&2
+            exit 1
+          fi
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          ls -lh "$path"
+
+      - name: Upload the APK
         uses: actions/upload-artifact@v4
         with:
           name: CatanMind-APK
-          path: |
-            build/apk/*.apk
-            dist/*.apk
-          retention-days: 30
-          if-no-files-found: warn
+          path: ${{ steps.apk.outputs.path }}
+          retention-days: 90
+          if-no-files-found: error
 
-      - name: Upload build logs on failure
+      - name: Upload logs if the build failed
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
           path: |
             build/
-            dist/
             *.log
           retention-days: 7
+          if-no-files-found: ignore
