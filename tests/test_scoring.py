@@ -1,10 +1,9 @@
 """The scoring model."""
 
-import math
 
 import pytest
 
-from catanmind.board import Board, Layout, Port, Resource, RESOURCES
+from catanmind.board import Board, Layout, Resource, RESOURCES
 from catanmind.scoring import (
     SATURATION,
     Scorer,
@@ -230,7 +229,7 @@ def test_expansion_falls_when_neighbours_are_taken(scorer, state):
 
 def test_an_enemy_road_closes_a_direction(scorer, state):
     node = 25
-    before = scorer.expansion_value(state, node, 1)
+    scorer.expansion_value(state, node, 1)
     for eid in state.board.node_edges[node]:
         state.build_road(2, eid, free=True)
     after = scorer.expansion_value(state, node, 1)

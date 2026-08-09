@@ -2,8 +2,8 @@
 
 import pytest
 
-from catanmind.board import Board, Building, Resource, SUPPLY
-from catanmind.state import GameState, Phase
+from catanmind.board import Board, Resource, SUPPLY
+from catanmind.state import GameState
 from catanmind import rules
 
 
@@ -241,10 +241,52 @@ def test_longest_road_award_needs_five_roads(state):
     assert rules.longest_road_holder(state) == 1
 
 
-def test_longest_road_tie_awards_nobody(state):
+def test_the_longest_road_holder_keeps_it_on_a_tie(state):
+    """
+    The card does not change hands on a tie — it moves only when someone
+    strictly beats the holder. Nobody hands over two points for drawing level.
+    """
     chain(state, 1, 5, start=0)
+    assert rules.longest_road_holder(state) == 1
     chain(state, 2, 5, start=30)
     assert rules.longest_road(state, 1) == rules.longest_road(state, 2) == 5
+    assert rules.longest_road_holder(state) == 1, "a tie leaves the card put"
+
+
+def test_beating_the_holder_takes_the_longest_road(state):
+    chain(state, 1, 5, start=0)
+    chain(state, 2, 6, start=30)
+    assert rules.longest_road(state, 2) > rules.longest_road(state, 1)
+    assert rules.longest_road_holder(state) == 2
+
+
+def test_an_enemy_settlement_can_cost_you_the_longest_road(state):
+    """Cutting a chain shortens it, and the card follows the new lengths."""
+    chain(state, 1, 6, start=0)
+    assert rules.longest_road_holder(state) == 1
+    middle = state.board.edge(state.edges_of(1)[2]).b
+    state.build_settlement(2, middle, free=True)
+    assert rules.longest_road(state, 1) < 5
+    assert rules.longest_road_holder(state) is None
+
+
+def test_undo_restores_the_award_holder(state):
+    """
+    The holder is history, not a property of the position, so it has to come
+    back correctly when the log is rewound.
+    """
+    chain(state, 1, 5, start=0)
+    assert rules.longest_road_holder(state) == 1
+    chain(state, 2, 6, start=30)
+    assert rules.longest_road_holder(state) == 2
+    while rules.longest_road(state, 2) >= rules.longest_road(state, 1):
+        assert state.undo()
+    assert rules.longest_road_holder(state) == 1
+
+
+def test_nobody_holds_the_road_before_anyone_reaches_five(state):
+    chain(state, 1, 4, start=0)
+    chain(state, 2, 4, start=30)
     assert rules.longest_road_holder(state) is None
 
 
@@ -261,13 +303,25 @@ def test_largest_army_needs_three_knights(state):
     assert rules.largest_army_holder(state) == 1
 
 
-def test_largest_army_tie_awards_nobody(state):
+def test_the_largest_army_holder_keeps_it_on_a_tie(state):
+    from catanmind.state import Event
+
+    for _ in range(3):
+        state.apply(Event.make("play_knight", player=1))
+    assert rules.largest_army_holder(state) == 1
+    for _ in range(3):
+        state.apply(Event.make("play_knight", player=2))
+    assert rules.largest_army_holder(state) == 1, "a tie leaves the card put"
+
+
+def test_a_fourth_knight_takes_the_largest_army(state):
     from catanmind.state import Event
 
     for _ in range(3):
         state.apply(Event.make("play_knight", player=1))
         state.apply(Event.make("play_knight", player=2))
-    assert rules.largest_army_holder(state) is None
+    state.apply(Event.make("play_knight", player=2))
+    assert rules.largest_army_holder(state) == 2
 
 
 # -- victory points --------------------------------------------------------

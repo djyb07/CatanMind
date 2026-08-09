@@ -15,11 +15,9 @@ import pytest
 
 import flet as ft
 
-from catanmind.board import Board, Building, DevCard, Layout, Port, Resource
+from catanmind.board import Building, DevCard, Layout, Port, Resource
 from catanmind.flow import Step
-from catanmind.state import Phase
 from catanmind.ui import BOARD_HEIGHT, CatanMind, board_shapes
-from catanmind.view import Viewport
 from catanmind import rules
 
 
@@ -599,6 +597,43 @@ def test_the_trade_dialog_opens_and_its_buttons_work(app):
     app._trade_dialog()
     assert app.page.dialogs
     assert click_all(app.page.dialogs[-1]) > 0
+
+
+def test_the_trade_dialog_offers_both_kinds_of_trade(app):
+    """Most turns are settled with another player, not with the bank."""
+    start_game(app)
+    play_setup(app)
+    app.flow.roll(8)
+    app.refresh()
+    app._trade_dialog()
+    labels = []
+    stack = [app.page.dialogs[-1]]
+    while stack:
+        c = stack.pop()
+        text = getattr(c, "content", None)
+        if isinstance(text, str):
+            labels.append(text)
+        for attr in ("controls", "actions"):
+            kids = getattr(c, attr, None)
+            if isinstance(kids, list):
+                stack.extend(kids)
+        if text is not None and not isinstance(text, str):
+            stack.append(text)
+    assert "Bank / port" in labels
+    assert "Another player" in labels
+
+
+def test_a_player_trade_recorded_through_the_ui_moves_cards(app):
+    start_game(app)
+    play_setup(app)
+    app.flow.roll(8)
+    clear_hands(app)
+    app.state.adjust(1, Resource.WHEAT, 2)
+    app.state.adjust(2, Resource.ORE, 1)
+    app.refresh()
+    assert app.flow.trade_player(2, [Resource.WHEAT] * 2, [Resource.ORE]).ok
+    assert app.state.players[1].hand.cards[Resource.ORE] == 1
+    assert app.state.players[2].hand.cards[Resource.WHEAT] == 2
 
 
 def test_the_discard_dialog_opens_and_its_buttons_work(app):

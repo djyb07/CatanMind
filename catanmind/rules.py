@@ -8,10 +8,10 @@ Nothing in this module mutates anything.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 
-from catanmind.board import Board, Building, COSTS, Resource, SUPPLY
-from catanmind.state import GameState, Phase
+from catanmind.board import Building, COSTS, Resource, SUPPLY
+from catanmind.state import GameState
 
 #: A player needs at least this many connected roads before Longest Road is
 #: awarded at all.
@@ -240,24 +240,18 @@ def longest_road_holder(state: GameState) -> Optional[int]:
     """
     Who holds Longest Road, or ``None``.
 
-    Requires at least :data:`LONGEST_ROAD_MINIMUM` roads, and a strict lead —
-    a tie leaves the card where it was, which here means unawarded.
+    The card is *sticky*: whoever takes it keeps it until another player
+    strictly beats their length, so a tie does not hand it over. That is
+    history rather than a property of the current position, which is why the
+    answer is maintained by :class:`~catanmind.state.GameState` as roads are
+    built and read back here.
     """
-    lengths = {p: longest_road(state, p) for p in state.players}
-    best = max(lengths.values(), default=0)
-    if best < LONGEST_ROAD_MINIMUM:
-        return None
-    leaders = [p for p, n in lengths.items() if n == best]
-    return leaders[0] if len(leaders) == 1 else None
+    return state.longest_road_holder
 
 
 def largest_army_holder(state: GameState) -> Optional[int]:
-    counts = {p: s.knights_played for p, s in state.players.items()}
-    best = max(counts.values(), default=0)
-    if best < LARGEST_ARMY_MINIMUM:
-        return None
-    leaders = [p for p, n in counts.items() if n == best]
-    return leaders[0] if len(leaders) == 1 else None
+    """Who holds Largest Army. Sticky, exactly like Longest Road."""
+    return state.largest_army_holder
 
 
 # --------------------------------------------------------------------------

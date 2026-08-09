@@ -15,8 +15,7 @@ and reused; the same search now runs in milliseconds.
 
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from catanmind.board import (
@@ -26,7 +25,6 @@ from catanmind.board import (
     DevCard,
     DEV_DECK,
     DEV_DECK_SIZE,
-    Port,
     Resource,
     RESOURCES,
     probability,
@@ -34,7 +32,6 @@ from catanmind.board import (
 from catanmind.scoring import (
     COVERAGE_FLOOR,
     PHASE_WEIGHTS,
-    SATURATION,
     Scorer,
     SpotScore,
     _join,
@@ -141,6 +138,23 @@ def turns_to_afford(
         else:
             worst = max(worst, missing / rate)
     return round(worst, 1)
+
+
+def _same_board(board: Board, state: GameState) -> None:
+    """
+    Guard against advising on a board that is no longer in play.
+
+    Editing the layout builds a *new* :class:`Board`, and a
+    :class:`~catanmind.scoring.Scorer` holds precomputed per-node values for
+    the board it was constructed with. Reusing a stale one produces advice for
+    tiles that are not on the table any more — confidently, and with no error.
+    Cheap identity check, once per call, so it fails loudly instead.
+    """
+    if board is not state.board:
+        raise ValueError(
+            "this advisor was built for a different board; rebuild it after "
+            "the layout changes"
+        )
 
 
 def describe_node(board: Board, node_id: int, short: bool = False) -> str:
@@ -274,6 +288,7 @@ class SetupAdvisor:
         On the second placement there is nothing left to look ahead to, so it
         simply maximises the marginal value given what we already own.
         """
+        _same_board(self.board, state)
         seat = seat if seat is not None else player
         placed = rules.setup_placements_done(state, player)
         legal = rules.legal_settlements(state, player, setup=True)
@@ -345,7 +360,7 @@ class SetupAdvisor:
         legal: Sequence[int], base: Dict[int, SpotScore],
         weights: Dict[str, float], top: int,
     ) -> List[SetupPlan]:
-        board = self.board
+        self.board
         gap = picks_between(seat, state.num_players)
 
         # Opponents are modelled as taking the best spot on the board by the
@@ -530,6 +545,7 @@ class TurnAdvisor:
         "what should I be saving for?" rather than going silent when your hand
         is empty — which is what the old engine did on every single turn.
         """
+        _same_board(self.board, state)
         player = state.me if player is None else player
         phase = phase_of(state, player)
         weights = PHASE_WEIGHTS[phase]
@@ -581,7 +597,7 @@ class TurnAdvisor:
                     action="build_settlement",
                     label="Settle on " + describe_node(self.board, spot.node_id),
                     value=round(gain, 2),
-                    reason=spot.explain() + f" Worth 1 VP.",
+                    reason=spot.explain() + " Worth 1 point.",
                     node=spot.node_id,
                     cost=COSTS["settlement"],
                     affordable=bool(afford),
@@ -607,14 +623,8 @@ class TurnAdvisor:
             }
             gain_production = self.scorer.marginal_utility(portfolio, added)
             gain = gain_production * weights["production"] + vp
-            numbers = sorted(
-                (self.board.tiles[c].number
-                 for c in self.board.node(node_id).tiles
-                 if self.board.tiles[c].number),
-                reverse=True,
-            )
             reason = (
-                f"Doubles what this spot already makes "
+                "Doubles what this spot already makes "
                 f"({describe_node(self.board, node_id)}). Worth 1 point."
             )
             if state.robber in self.board.node(node_id).tiles:
@@ -799,12 +809,13 @@ class TurnAdvisor:
         Scores each candidate tile by the production it denies — weighted by how
         close that opponent is to winning — plus the chance of a useful steal.
         """
+        _same_board(self.board, state)
         player = state.me if player is None else player
         board = self.board
         best: Optional[Advice] = None
         best_value = 0.0
 
-        my_vp = rules.victory_points(state, player)
+        rules.victory_points(state, player)
         threat = {
             p: max(1.0, rules.victory_points(state, p) / max(1, state.target_vp - 2))
             for p in state.opponents(player)

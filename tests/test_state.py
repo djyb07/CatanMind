@@ -2,8 +2,8 @@
 
 import pytest
 
-from catanmind.board import Board, Building, COSTS, Layout, Resource, RESOURCES
-from catanmind.state import Event, GameState, Hand, Phase
+from catanmind.board import Board, COSTS, Layout, Resource, RESOURCES
+from catanmind.state import Event, GameState, Hand
 from catanmind import rules
 
 
@@ -53,7 +53,7 @@ def test_roll_pays_settlements_and_cities(state):
 
 
 def test_seven_pays_nobody(state):
-    board = state.board
+    state.board
     for node in range(0, 54, 7):
         if rules.can_place_settlement(state, 1, node, setup=True):
             state.build_settlement(1, node, free=True)

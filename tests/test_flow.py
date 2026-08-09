@@ -7,7 +7,7 @@ free settlements in a row and offered every action at every moment.
 
 import pytest
 
-from catanmind.board import Board, Building, DevCard, Layout, Resource
+from catanmind.board import Board, DevCard, Resource
 from catanmind.flow import Step, TurnFlow, snake_order
 from catanmind.state import GameState, Phase
 from catanmind import rules
@@ -61,6 +61,10 @@ def clear_hands(state):
     Setup legitimately pays out each player's second settlement, so play does
     not begin from zero. Tests about cost and affordability want a known
     starting point, and say so explicitly rather than assuming one.
+
+    This writes to the hands directly rather than through an event, so it does
+    *not* survive a replay — any test that clears hands and then undoes will
+    see the setup payout come back. Pass ``empty_hands=False`` there.
     """
     for player in state.players.values():
         for resource in Resource:
@@ -556,6 +560,80 @@ def test_buying_a_development_card_costs_and_draws(flow):
 # -- trading ---------------------------------------------------------------
 
 
+def test_a_player_trade_moves_cards_both_ways(flow):
+    reach_main(flow)
+    give(flow.state, 1, wheat=2)
+    give(flow.state, 2, ore=1)
+    assert flow.trade_player(2, [Resource.WHEAT] * 2, [Resource.ORE]).ok
+    assert flow.state.players[1].hand.cards[Resource.WHEAT] == 0
+    assert flow.state.players[1].hand.cards[Resource.ORE] == 1
+    assert flow.state.players[2].hand.cards[Resource.WHEAT] == 2
+    assert flow.state.players[2].hand.cards[Resource.ORE] == 0
+
+
+def test_you_cannot_trade_away_cards_you_do_not_hold(flow):
+    reach_main(flow)
+    give(flow.state, 1, wheat=1)
+    result = flow.trade_player(2, [Resource.WHEAT] * 3, [Resource.ORE])
+    assert not result.ok
+    assert "short" in (result.reason or "").lower()
+
+
+def test_a_trade_must_go_both_ways(flow):
+    """The rules do not let you hand cards over for nothing."""
+    reach_main(flow)
+    give(flow.state, 1, wheat=2)
+    assert not flow.trade_player(2, [Resource.WHEAT], []).ok
+    assert not flow.trade_player(2, [], [Resource.ORE]).ok
+
+
+def test_you_cannot_trade_with_yourself(flow):
+    reach_main(flow)
+    give(flow.state, 1, wheat=2)
+    assert not flow.trade_player(1, [Resource.WHEAT], [Resource.ORE]).ok
+
+
+def test_trading_is_only_allowed_on_your_own_turn(flow):
+    run_setup(flow)
+    clear_hands(flow.state)
+    give(flow.state, 1, wheat=2)
+    assert flow.step is Step.PRE_ROLL
+    assert not flow.trade_player(2, [Resource.WHEAT], [Resource.ORE]).ok
+
+
+def test_a_trade_the_opponent_cannot_cover_still_arrives(flow):
+    """
+    Our picture of an opponent's hand is an estimate. If the trade happened at
+    the table, the cards must land — refusing would make the app argue with
+    what the player just watched.
+    """
+    reach_main(flow)
+    give(flow.state, 1, wheat=1)
+    assert flow.state.players[2].hand.cards[Resource.ORE] == 0
+    assert flow.trade_player(2, [Resource.WHEAT], [Resource.ORE]).ok
+    assert flow.state.players[1].hand.cards[Resource.ORE] == 1
+    assert flow.state.players[2].hand.cards[Resource.ORE] == 0
+
+
+def test_a_player_trade_can_be_undone(flow):
+    # Deliberately not using reach_main's hand clearing: that writes straight
+    # to the hands rather than through the log, so a replay would put the
+    # cleared cards back and the comparison would be against a fiction.
+    reach_main(flow, empty_hands=False)
+    give(flow.state, 1, wheat=2)
+    give(flow.state, 2, ore=1)
+    before = {
+        p: dict(flow.state.players[p].hand.cards) for p in flow.state.players
+    }
+
+    flow.trade_player(2, [Resource.WHEAT] * 2, [Resource.ORE])
+    assert flow.state.players[1].hand.cards != before[1]
+
+    flow.undo()
+    for p in flow.state.players:
+        assert flow.state.players[p].hand.cards == before[p]
+
+
 def test_a_bank_trade_needs_the_full_rate(flow):
     """The rate is whatever the player's ports give them, not a flat 4:1."""
     reach_main(flow)
@@ -645,6 +723,43 @@ def test_the_banner_reads_as_english(flow):
     flow.roll(8)
     flow.end_turn()
     assert flow.banner() == "Player 2's turn — roll the dice"
+
+
+def test_road_building_with_nowhere_to_build_does_not_strand_the_turn(flow):
+    """
+    A step whose only action is impossible is a dead end. If the board offers
+    no legal road, the card simply resolves.
+    """
+    reach_main(flow)
+    for edge in list(rules.legal_roads(flow.state, 1)):
+        flow.state.build_road(3, edge, free=True)
+    assert rules.legal_roads(flow.state, 1) == []
+
+    flow.state.players[1].dev_cards[DevCard.ROAD_BUILDING] = 1
+    assert flow.play_dev(DevCard.ROAD_BUILDING).ok
+    assert flow.step is not Step.ROAD_BUILDING
+    assert flow.free_roads == 0
+    assert any(a.enabled for a in flow.available_actions())
+
+
+def test_a_win_is_only_declared_on_the_winners_own_turn(flow):
+    """
+    Points only ever arrive on your own turn, and freezing the screen during
+    someone else's move would stop them recording it.
+    """
+    reach_main(flow)
+    for node in list(flow.state.settlements_of(2)):
+        flow.state.build_city(2, node, free=True)
+    flow.state.players[2].vp_cards = 6
+    flow._derive()
+
+    assert flow.current == 1
+    assert flow.winner() == 2
+    assert flow.step is not Step.OVER, "player 1 is still mid-turn"
+
+    flow.end_turn()
+    assert flow.current == 2
+    assert flow.step is Step.OVER
 
 
 def test_the_game_ends_when_someone_reaches_the_target(flow):

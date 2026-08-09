@@ -5,7 +5,7 @@ import math
 import pytest
 
 from catanmind.board import Board
-from catanmind.view import EDGE_RADIUS, NODE_RADIUS, Viewport
+from catanmind.view import NODE_RADIUS, Viewport
 
 
 @pytest.fixture(scope="module")

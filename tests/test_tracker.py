@@ -2,9 +2,9 @@
 
 import pytest
 
-from catanmind.board import Board, Building, Resource, RESOURCES
-from catanmind.state import Event, GameState, Phase
-from catanmind.tracker import HandEstimate, Tracker
+from catanmind.board import Board, Resource, RESOURCES
+from catanmind.state import GameState
+from catanmind.tracker import Tracker
 from catanmind import rules
 
 

@@ -14,7 +14,6 @@ from catanmind.advisor import (
     SetupAdvisor,
     TurnAdvisor,
     income_per_round,
-    phase_of,
     turns_to_afford,
     vp_value,
 )
@@ -22,11 +21,7 @@ from catanmind.board import (
     Board,
     COSTS,
     Layout,
-    NUMBER_TOKENS,
     Resource,
-    SPIRAL,
-    TILE_POOL,
-    pips,
 )
 from catanmind.flow import TurnFlow
 from catanmind.scoring import Scorer

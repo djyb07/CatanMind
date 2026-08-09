@@ -5,7 +5,6 @@ import time
 import pytest
 
 from catanmind.advisor import (
-    Advice,
     SetupAdvisor,
     TurnAdvisor,
     phase_of,
@@ -185,6 +184,23 @@ def test_second_pick_reports_the_combined_resource_coverage(
     assert set(plan.combined_resources) <= set(RESOURCES)
 
 
+def test_an_advisor_refuses_to_work_on_a_replaced_board(state, board, scorer):
+    """
+    Editing the layout builds a new board. A scorer caches per-node values for
+    the board it was made with, so a stale one would give confident advice
+    about tiles that are no longer on the table.
+    """
+    advisor = SetupAdvisor(board, scorer)
+    turn = TurnAdvisor(board, scorer)
+    state.set_layout(Layout.random())
+    assert state.board is not board
+
+    with pytest.raises(ValueError, match="different board"):
+        advisor.recommend(state, 1, seat=1)
+    with pytest.raises(ValueError, match="different board"):
+        turn.recommend(state, 1)
+
+
 def test_setup_is_fast(state, setup_advisor):
     """
     The old solver took 6.7s for seat 1 because it recomputed the opponent
@@ -360,7 +376,7 @@ def test_robber_prefers_the_tile_that_denies_more(
 ):
     play_out_setup(state, board, scorer)
     advice = turn_advisor.robber_advice(state, 1)
-    chosen = board.tiles[advice.coord]
+    board.tiles[advice.coord]
     # Upgrading an opponent's settlement elsewhere should be able to pull the
     # recommendation away from the original tile.
     others = [

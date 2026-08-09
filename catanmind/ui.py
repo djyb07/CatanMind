@@ -15,7 +15,7 @@ no base64 round-trip — and hit-testing lives in :mod:`catanmind.view`.
 
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import flet as ft
 import flet.canvas as cv
@@ -27,7 +27,6 @@ from catanmind.advisor import (
     TurnAdvisor,
     describe_edge,
     describe_edge_end,
-    describe_node,
 )
 from catanmind.board import (
     Board,
@@ -43,9 +42,9 @@ from catanmind.board import (
     TILE_POOL,
     pips,
 )
-from catanmind.flow import Action, Step, TurnFlow, snake_order
+from catanmind.flow import Action, Step, TurnFlow
 from catanmind.scoring import Scorer
-from catanmind.state import GameState, Phase
+from catanmind.state import GameState
 from catanmind.tracker import Tracker
 from catanmind.view import Viewport
 from catanmind import rules
@@ -1981,61 +1980,171 @@ class CatanMind:
         self.page.update()
 
     def _trade_dialog(self) -> None:
+        """
+        One dialog, two kinds of trade.
+
+        Most Catan turns are settled by trading with the person across the
+        table, not with the bank, so both live here: the bank tab swaps at your
+        port rate, the player tab moves whatever the two of you agreed.
+        """
         player = self.flow.current
         rates = self.state.ports_of(player)
         hand = self.state.players[player].hand
-        chosen: Dict[str, Optional[Resource]] = {"give": None, "get": None}
+        opponents = [p for p in sorted(self.state.players) if p != player]
+
+        mode = {"kind": "bank"}
+        bank = {"give": None, "get": None}
+        deal: Dict[str, object] = {
+            "with": opponents[0] if opponents else None,
+            "give": {r: 0 for r in RESOURCES},
+            "get": {r: 0 for r in RESOURCES},
+        }
         body = ft.Column(tight=True, spacing=8)
 
-        def redraw() -> None:
-            body.controls = [
-                ft.Text("Give", size=12, color=MUTED),
-                ft.Row(
-                    [
-                        ft.Button(
-                            f"{rates[r]}× {RESOURCE_LABEL[r]}",
-                            bgcolor=(
-                                RESOURCE_COLOR[r] if chosen["give"] is r
-                                else SURFACE_HI
-                            ),
-                            color="#ffffff" if chosen["give"] is r else TEXT,
-                            disabled=hand.cards[r] < rates[r],
-                            on_click=lambda _e, r=r: pick("give", r),
-                        )
-                        for r in RESOURCES
-                    ],
-                    wrap=True, spacing=6, run_spacing=6,
-                ),
-                ft.Text("Receive", size=12, color=MUTED),
-                ft.Row(
-                    [
-                        ft.Button(
-                            RESOURCE_LABEL[r],
-                            bgcolor=(
-                                RESOURCE_COLOR[r] if chosen["get"] is r
-                                else SURFACE_HI
-                            ),
-                            color="#ffffff" if chosen["get"] is r else TEXT,
-                            on_click=lambda _e, r=r: pick("get", r),
-                        )
-                        for r in RESOURCES
-                    ],
-                    wrap=True, spacing=6, run_spacing=6,
-                ),
-            ]
-            self.page.update()
+        def counter_row(bucket: str, resource: Resource, cap: Optional[int]) -> ft.Row:
+            counts = deal[bucket]  # type: ignore[index]
+            return ft.Row(
+                [
+                    ft.Container(width=12, height=12, border_radius=3,
+                                 bgcolor=RESOURCE_COLOR[resource]),
+                    ft.Text(RESOURCE_LABEL[resource], size=12, color=TEXT,
+                            width=52),
+                    ft.IconButton(
+                        icon=ft.Icons.REMOVE, icon_size=15, icon_color=MUTED,
+                        on_click=lambda _e, b=bucket, r=resource: bump(b, r, -1),
+                    ),
+                    ft.Text(str(counts[resource]), size=14, color=TEXT, width=18,
+                            text_align=ft.TextAlign.CENTER),
+                    ft.IconButton(
+                        icon=ft.Icons.ADD, icon_size=15, icon_color=MUTED,
+                        disabled=cap is not None and counts[resource] >= cap,
+                        on_click=lambda _e, b=bucket, r=resource: bump(b, r, 1),
+                    ),
+                ],
+                spacing=1, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
 
-        def pick(slot: str, r: Resource) -> None:
-            chosen[slot] = r
+        def bump(bucket: str, resource: Resource, delta: int) -> None:
+            counts = deal[bucket]  # type: ignore[index]
+            cap = hand.cards[resource] if bucket == "give" else 20
+            counts[resource] = max(0, min(cap, counts[resource] + delta))
             redraw()
 
-        def confirm(_e) -> None:
-            give, get = chosen["give"], chosen["get"]
-            if give is None or get is None or give is get:
-                self.status = "Pick one resource to give and a different one to get."
+        def set_mode(kind: str) -> None:
+            mode["kind"] = kind
+            redraw()
+
+        def set_partner(p: int) -> None:
+            deal["with"] = p
+            redraw()
+
+        def pick_bank(slot: str, r: Resource) -> None:
+            bank[slot] = r
+            redraw()
+
+        def redraw() -> None:
+            tabs = ft.Row(
+                [
+                    ft.Button(
+                        label,
+                        bgcolor=ACCENT if mode["kind"] == key else SURFACE_HI,
+                        color="#1a1a1a" if mode["kind"] == key else TEXT,
+                        on_click=lambda _e, k=key: set_mode(k),
+                    )
+                    for key, label in (("bank", "Bank / port"),
+                                       ("player", "Another player"))
+                ],
+                spacing=6,
+            )
+
+            if mode["kind"] == "bank":
+                rows = [
+                    ft.Text("Give", size=12, color=MUTED),
+                    ft.Row(
+                        [
+                            ft.Button(
+                                f"{rates[r]}× {RESOURCE_LABEL[r]}",
+                                bgcolor=(RESOURCE_COLOR[r] if bank["give"] is r
+                                         else SURFACE_HI),
+                                color="#ffffff" if bank["give"] is r else TEXT,
+                                disabled=hand.cards[r] < rates[r],
+                                on_click=lambda _e, r=r: pick_bank("give", r),
+                            )
+                            for r in RESOURCES
+                        ],
+                        wrap=True, spacing=6, run_spacing=6,
+                    ),
+                    ft.Text("Receive", size=12, color=MUTED),
+                    ft.Row(
+                        [
+                            ft.Button(
+                                RESOURCE_LABEL[r],
+                                bgcolor=(RESOURCE_COLOR[r] if bank["get"] is r
+                                         else SURFACE_HI),
+                                color="#ffffff" if bank["get"] is r else TEXT,
+                                on_click=lambda _e, r=r: pick_bank("get", r),
+                            )
+                            for r in RESOURCES
+                        ],
+                        wrap=True, spacing=6, run_spacing=6,
+                    ),
+                ]
             else:
-                result = self.flow.trade_bank(give, get)
-                self.status = "" if result.ok else (result.reason or "")
+                rows = [
+                    ft.Text("With", size=12, color=MUTED),
+                    ft.Row(
+                        [
+                            ft.Button(
+                                f"Player {p}",
+                                bgcolor=(PLAYER_COLOR[p] if deal["with"] == p
+                                         else SURFACE_HI),
+                                color="#ffffff" if deal["with"] == p else TEXT,
+                                on_click=lambda _e, p=p: set_partner(p),
+                            )
+                            for p in opponents
+                        ],
+                        wrap=True, spacing=6, run_spacing=6,
+                    ),
+                    ft.Text("You give", size=12, color=MUTED),
+                ]
+                rows += [
+                    counter_row("give", r, hand.cards[r])
+                    for r in RESOURCES if hand.cards[r] > 0
+                ]
+                rows.append(ft.Text("You receive", size=12, color=MUTED))
+                rows += [counter_row("get", r, None) for r in RESOURCES]
+
+            body.controls = [tabs] + rows
+            self.page.update()
+
+        def confirm(_e) -> None:
+            if mode["kind"] == "bank":
+                give, get = bank["give"], bank["get"]
+                if give is None or get is None or give is get:
+                    self.status = (
+                        "Pick one resource to give and a different one to get."
+                    )
+                else:
+                    result = self.flow.trade_bank(give, get)
+                    self.status = "" if result.ok else (result.reason or "")
+            else:
+                partner = deal["with"]
+                giving = [
+                    r for r in RESOURCES
+                    for _ in range(deal["give"][r])  # type: ignore[index]
+                ]
+                getting = [
+                    r for r in RESOURCES
+                    for _ in range(deal["get"][r])  # type: ignore[index]
+                ]
+                if partner is None:
+                    self.status = "Pick who you traded with."
+                else:
+                    result = self.flow.trade_player(partner, giving, getting)
+                    self.status = (
+                        f"Traded with Player {partner}." if result.ok
+                        else (result.reason or "")
+                    )
             self.page.pop_dialog()
             self.refresh()
 
@@ -2043,11 +2152,11 @@ class CatanMind:
         self.page.show_dialog(
             ft.AlertDialog(
                 modal=True, bgcolor=SURFACE,
-                title=ft.Text("Trade with the bank", color=TEXT),
+                title=ft.Text("Trade", color=TEXT),
                 content=ft.Container(content=body, width=330),
                 actions=[
                     ft.TextButton("Cancel", on_click=lambda _e: self._close_dialog()),
-                    ft.Button("Trade", on_click=confirm, bgcolor=ACCENT,
+                    ft.Button("Confirm", on_click=confirm, bgcolor=ACCENT,
                               color="#1a1a1a"),
                 ],
             )

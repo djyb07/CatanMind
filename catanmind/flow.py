@@ -25,11 +25,11 @@ then end the turn and the next player is up.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-from catanmind.board import Building, COSTS, DevCard, Resource, RESOURCES
+from catanmind.board import COSTS, DevCard, Resource
 from catanmind.state import Event, GameState, Phase
 from catanmind import rules
 
@@ -195,8 +195,21 @@ class TurnFlow:
         if self.step is Step.STEAL and not self.steal_victims():
             self.step = Step.MAIN if self.has_rolled else Step.PRE_ROLL
 
-        if not in_setup and rules.winner(state) is not None:
-            self.step = Step.OVER
+        # Road Building on a board with nowhere left to build would otherwise
+        # strand the turn on a step whose only action is impossible.
+        if self.step is Step.ROAD_BUILDING and not rules.legal_roads(
+            state, self.current
+        ):
+            self.free_roads = 0
+            self.step = Step.MAIN if self.has_rolled else Step.PRE_ROLL
+
+        # You win on your own turn. Points only ever arrive on your turn, and
+        # announcing someone else's victory mid-turn would freeze the screen
+        # before the current player had finished recording their move.
+        if not in_setup:
+            champion = rules.winner(state)
+            if champion is not None and champion == self.current:
+                self.step = Step.OVER
 
         self.in_setup = in_setup
 
@@ -295,7 +308,7 @@ class TurnFlow:
             ]
 
         if step is Step.SETUP_ROAD:
-            node = self.setup_settlement_node()
+            self.setup_settlement_node()
             return [
                 Action(
                     "setup_road",
@@ -670,6 +683,57 @@ class TurnFlow:
             Event.make(
                 "trade_bank", player=self.current,
                 give=give.value, get=get.value, rate=rate,
+            )
+        )
+        self._derive()
+        return rules.OK
+
+    def trade_player(
+        self,
+        other: int,
+        give: Sequence[Resource],
+        get: Sequence[Resource],
+    ) -> rules.Legality:
+        """
+        Record a trade with another player.
+
+        Only the current player's side is checked strictly — that is the hand
+        we actually know. What the opponent hands over is taken on trust,
+        because our picture of their cards is an estimate and refusing a trade
+        that really happened would make the app argue with the table.
+
+        Trading is only legal on your own turn, and both sides must give
+        something: the rules do not allow handing cards over for nothing.
+        """
+        if self.step is not Step.MAIN:
+            return rules.Legality(False, "Trade during your building step")
+        if other == self.current:
+            return rules.Legality(False, "Pick a different player")
+        if other not in self.state.players:
+            return rules.Legality(False, f"No player {other}")
+        if not give or not get:
+            return rules.Legality(
+                False, "A trade has to go both ways — pick cards on both sides"
+            )
+
+        hand = self.state.players[self.current].hand
+        needed: Dict[Resource, int] = {}
+        for resource in give:
+            needed[resource] = needed.get(resource, 0) + 1
+        short = [
+            f"{count - hand.cards[r]} {r.value}"
+            for r, count in needed.items() if hand.cards[r] < count
+        ]
+        if short:
+            return rules.Legality(False, "You are short " + ", ".join(short))
+
+        self.state.apply(
+            Event.make(
+                "trade_player",
+                player=self.current,
+                other=other,
+                give=",".join(r.value for r in give),
+                get=",".join(r.value for r in get),
             )
         )
         self._derive()

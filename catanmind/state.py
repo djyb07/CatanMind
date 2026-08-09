@@ -13,9 +13,9 @@ with the forward path the way hand-written inverse operations do.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from catanmind.board import (
     Board,
@@ -226,6 +226,10 @@ class GameState:
         self.turn: int = 1
         self.last_roll: Optional[int] = None
         self.dev_cards_drawn: int = 0
+        #: Who currently holds each award card. Sticky — see
+        #: :meth:`_next_holder` — so it cannot be read off a snapshot.
+        self.longest_road_holder: Optional[int] = None
+        self.largest_army_holder: Optional[int] = None
         # Cached derived values, invalidated on every mutation.
         self._derived_dirty = True
 
@@ -294,6 +298,8 @@ class GameState:
         self.buildings[node] = (player, Building.SETTLEMENT)
         if not free:
             self.players[player].hand.pay(COSTS["settlement"])
+        # A new settlement can cut an opponent's road in two.
+        self._update_longest_road()
 
     def _do_build_city(self, player: int, node: int, free: bool = False) -> None:
         self.buildings[node] = (player, Building.CITY)
@@ -304,6 +310,46 @@ class GameState:
         self.roads[edge] = player
         if not free:
             self.players[player].hand.pay(COSTS["road"])
+        self._update_longest_road()
+
+    # -- the two award cards ----------------------------------------------
+    #
+    # Both are *sticky*: the holder keeps the card on a tie, and only loses it
+    # to someone who strictly beats them. That history cannot be recovered
+    # from a snapshot, so it is tracked here as events are applied — which
+    # means it still replays from the log, and undo still works.
+
+    def _update_longest_road(self) -> None:
+        from catanmind.rules import LONGEST_ROAD_MINIMUM, longest_road
+
+        lengths = {p: longest_road(self, p) for p in self.players}
+        self.longest_road_holder = self._next_holder(
+            self.longest_road_holder, lengths, LONGEST_ROAD_MINIMUM
+        )
+
+    def _update_largest_army(self) -> None:
+        from catanmind.rules import LARGEST_ARMY_MINIMUM
+
+        counts = {p: s.knights_played for p, s in self.players.items()}
+        self.largest_army_holder = self._next_holder(
+            self.largest_army_holder, counts, LARGEST_ARMY_MINIMUM
+        )
+
+    @staticmethod
+    def _next_holder(
+        holder: Optional[int], scores: Dict[int, int], minimum: int
+    ) -> Optional[int]:
+        best = max(scores.values(), default=0)
+        if best < minimum:
+            return None
+        if holder is not None and scores.get(holder, 0) == best:
+            return holder            # a tie leaves the card where it is
+        leaders = [p for p, n in scores.items() if n == best]
+        if len(leaders) == 1:
+            return leaders[0]
+        # Nobody leads outright and the old holder has fallen behind, so the
+        # card is set aside until one player beats the rest.
+        return holder if holder is not None and scores.get(holder, 0) >= minimum else None
 
     def _do_move_robber(self, coord: Tuple[int, int]) -> None:
         self.robber = tuple(coord)  # type: ignore[assignment]
@@ -347,13 +393,26 @@ class GameState:
     def _do_trade_player(
         self, player: int, other: int, give: str, get: str
     ) -> None:
-        a, b = self.players[player].hand, self.players[other].hand
+        """
+        Move cards between two hands.
+
+        The receiving side always gains what the trade says, while the giving
+        side is clamped at zero. The user is recording a trade that really
+        happened at the table, so the cards must arrive even if our estimate of
+        the other player's hand was short — dropping them would quietly
+        invent a loss that nobody at the table saw.
+        """
+        mine, theirs = self.players[player].hand, self.players[other].hand
         for token in give.split(","):
-            if token and a.take(Resource(token), 1):
-                b.add(Resource(token), 1)
+            if token:
+                resource = Resource(token)
+                mine.take(resource, 1)
+                theirs.add(resource, 1)
         for token in get.split(","):
-            if token and b.take(Resource(token), 1):
-                a.add(Resource(token), 1)
+            if token:
+                resource = Resource(token)
+                theirs.take(resource, 1)
+                mine.add(resource, 1)
 
     def _do_buy_dev(self, player: int, card: Optional[str] = None) -> None:
         """
@@ -380,6 +439,7 @@ class GameState:
 
         if kind is DevCard.KNIGHT:
             p.knights_played += 1
+            self._update_largest_army()
         elif kind is DevCard.VICTORY_POINT:
             p.vp_cards += 1
         elif kind is DevCard.YEAR_OF_PLENTY:

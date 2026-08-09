@@ -12,7 +12,6 @@ from catanmind.board import (
     Port,
     PORT_POOL,
     Resource,
-    RESOURCES,
     SPIRAL,
     TILE_POOL,
     hex_distance,

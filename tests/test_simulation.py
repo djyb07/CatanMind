@@ -14,7 +14,7 @@ import random
 
 import pytest
 
-from catanmind.board import Board, Building, DevCard, Layout, Resource, SUPPLY
+from catanmind.board import Board, DevCard, Layout, Resource, SUPPLY
 from catanmind.flow import Step, TurnFlow
 from catanmind.scoring import Scorer
 from catanmind.state import GameState
@@ -135,14 +135,26 @@ def play_game(seed: int, max_actions: int = 900) -> dict:
         elif action.id == "reveal_vp":
             result = flow.reveal_vp()
         elif action.id == "trade":
-            rates = state.ports_of(flow.current)
             hand = state.players[flow.current].hand
-            options = [r for r in Resource if hand.cards[r] >= rates[r]]
-            if not options:
-                continue
-            give = rng.choice(options)
-            get = rng.choice([r for r in Resource if r is not give])
-            result = flow.trade_bank(give, get)
+            if rng.random() < 0.5:
+                # With another player: any card we hold, for anything.
+                spare = [r for r in Resource if hand.cards[r] > 0]
+                if not spare:
+                    continue
+                give = rng.choice(spare)
+                get = rng.choice([r for r in Resource if r is not give])
+                other = rng.choice(
+                    [p for p in state.players if p != flow.current]
+                )
+                result = flow.trade_player(other, [give], [get])
+            else:
+                rates = state.ports_of(flow.current)
+                options = [r for r in Resource if hand.cards[r] >= rates[r]]
+                if not options:
+                    continue
+                give = rng.choice(options)
+                get = rng.choice([r for r in Resource if r is not give])
+                result = flow.trade_bank(give, get)
         elif action.id == "end_turn":
             result = flow.end_turn()
         elif action.id == "new_game":

@@ -22,9 +22,9 @@ Screen convention: ``+y`` points **down**, so increasing ``r`` moves down.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # --------------------------------------------------------------------------
 # Enums and constants
@@ -116,6 +116,7 @@ COSTS: Dict[str, Dict[Resource, int]] = {
 
 #: Buildings each player starts with, i.e. the supply limit.
 SUPPLY = {"settlement": 5, "city": 4, "road": 15}
+
 
 class DevCard(Enum):
     """The five development cards."""
@@ -542,7 +543,6 @@ class Board:
         # Walk the ring. Every coastal node touches exactly two coastal edges.
         start = min(coastal)
         ring: List[int] = [start]
-        prev_node = self.edges[start].a
         cur_node = self.edges[start].b
         while len(ring) < len(coastal):
             nxt = None
@@ -553,7 +553,7 @@ class Board:
             if nxt is None:  # pragma: no cover - would mean a broken coastline
                 break
             ring.append(nxt)
-            prev_node, cur_node = cur_node, self.edges[nxt].other(cur_node)
+            cur_node = self.edges[nxt].other(cur_node)
 
         gaps = (2, 2, 3)
         slots: List[int] = []
