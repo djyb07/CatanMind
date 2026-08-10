@@ -39,6 +39,7 @@ from catanmind.scoring import (
 )
 from catanmind.state import GameState, Phase
 from catanmind.tracker import Tracker
+from catanmind import forecast
 from catanmind import rules
 
 
@@ -66,6 +67,13 @@ class Advice:
     turns: float = 0.0
     #: ``value`` discounted by :attr:`turns` — what the ranking actually uses.
     rate: float = 0.0
+    #: For a trade: who with, and which cards move.
+    partner: Optional[int] = None
+    give: List[Resource] = field(default_factory=list)
+    get: List[Resource] = field(default_factory=list)
+    #: Expected points the forecast says this trade is worth to each side.
+    race_gain: float = 0.0
+    race_cost: float = 0.0
 
     def cost_text(self) -> str:
         if not self.cost:
@@ -88,6 +96,11 @@ PAIR_TOLERANCE = 0.5
 TRADE_GOAL_WEIGHT: Dict[str, float] = {
     "city": 1.30, "settlement": 1.25, "dev_card": 1.00, "road": 0.90,
 }
+
+#: How hard the forecast pulls on a trade's score. Enough to overturn the
+#: heuristics when the race says something different, not so much that a
+#: rollout's noise decides the ranking on its own.
+RACE_WEIGHT = 9.0
 
 #: Asking a player costs nothing if they refuse — the bank is still there
 #: afterwards. So an unlikely ask keeps this share of its value rather
@@ -680,9 +693,21 @@ class SetupAdvisor:
 class TurnAdvisor:
     """Ranks every action available on a normal turn."""
 
-    def __init__(self, board: Board, scorer: Optional[Scorer] = None):
+    def __init__(
+        self,
+        board: Board,
+        scorer: Optional[Scorer] = None,
+        *,
+        use_forecast: bool = True,
+        forecast_samples: int = 120,
+    ):
         self.board = board
         self.scorer = scorer or Scorer(board)
+        #: Whether to play the rest of the game out before settling a trade.
+        #: Off is for callers that need speed over depth — a bulk simulation,
+        #: say — and never for a player asking what to do.
+        self.use_forecast = use_forecast
+        self.forecast_samples = forecast_samples
 
     def recommend(
         self, state: GameState, player: Optional[int] = None, top: int = 6,
@@ -1205,11 +1230,70 @@ class TurnAdvisor:
                     affordable=True,
                     urgency=urgency if danger < 0.75 else "normal",
                 )
+                best.partner = other
+                best.give = [give] * missing
+                best.get = [need] * missing
                 best_score = score
 
         if best is not None:
+            self._weigh_the_race(state, player, best)
             out.append(best)
         return out
+
+    def _weigh_the_race(
+        self, state: GameState, player: int, offer: Advice
+    ) -> None:
+        """
+        Settle the trade on the only question that finally matters: who gets
+        to ten first.
+
+        The heuristics above judge a card by scarcity, which cannot tell the
+        difference between handing an opponent something that carries them
+        from seven to nine and handing them something that wins them the game.
+        This plays the rest of the game out over real dice and compares the two
+        gains directly. It runs on one candidate — the best the heuristics
+        found — because it is far more expensive than they are.
+        """
+        if not self.use_forecast or offer.partner is None:
+            return
+        try:
+            my_gain, their_gain = forecast.trade_race(
+                state, player, offer.partner, offer.give, offer.get,
+                samples=self.forecast_samples,
+            )
+        except Exception:
+            # A forecast is an improvement on the heuristic, never a
+            # precondition for giving advice at all.
+            return
+
+        threat = self._threat_level(
+            state, offer.partner,
+            rules.victory_points(state, offer.partner, include_hidden=False),
+            max(
+                (rules.victory_points(state, p, include_hidden=False)
+                 for p in state.opponents(player)),
+                default=0,
+            ),
+        )
+        # Their gain is discounted when they are far from winning and counted
+        # in full when they are close: two points to a player on three is
+        # noise, and two points to a player on eight is the game.
+        edge = my_gain - their_gain * (0.35 + 0.9 * threat)
+        offer.race_gain = round(my_gain, 3)
+        offer.race_cost = round(their_gain, 3)
+        offer.value = round(max(0.5, offer.value + edge * RACE_WEIGHT), 2)
+
+        if their_gain > my_gain and threat >= 0.5:
+            offer.reason += (
+                f" Looking ahead, this does more for Player {offer.partner} "
+                f"than for you ({their_gain:+.1f} against {my_gain:+.1f} "
+                "points over the next few rounds) — think twice."
+            )
+        elif my_gain > 0.05:
+            offer.reason += (
+                f" Over the next few rounds it is worth about "
+                f"{my_gain:+.1f} points to you and {their_gain:+.1f} to them."
+            )
 
     # -- robber ------------------------------------------------------------
 

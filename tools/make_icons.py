@@ -201,14 +201,78 @@ def sea_lattice(image: Image.Image, spacing: float, colour: str) -> None:
 ICON_MARK_RADIUS = 0.28
 
 
+#: An illustration dropped here is used instead of the drawn mark.
+SOURCE_ICON = "icon_source.png"
+
+#: Fraction of the icon the artwork is allowed to occupy. Android crops
+#: launcher icons to a circle or squircle and only guarantees the middle
+#: two-thirds, so an illustration that fills its own canvas edge to edge loses
+#: its corners on most phones. Shrinking it onto our background is the fix,
+#: and it has to happen here rather than being left to whoever supplies the
+#: art.
+SAFE_FRACTION = 0.74
+
+
 def build_icon() -> None:
     image = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), SEA)
     sea_lattice(image, ICON_SIZE * 0.11, "#16405c")
-    draw_mark(
-        image, (ICON_SIZE / 2, ICON_SIZE / 2), ICON_SIZE * ICON_MARK_RADIUS
-    )
+
+    source = ASSETS / SOURCE_ICON
+    if source.exists():
+        _place_illustration(image, source)
+    else:
+        draw_mark(
+            image, (ICON_SIZE / 2, ICON_SIZE / 2), ICON_SIZE * ICON_MARK_RADIUS
+        )
     image.save(ASSETS / "icon.png")
     print(f"wrote {ASSETS / 'icon.png'} ({ICON_SIZE}x{ICON_SIZE})")
+
+
+def _place_illustration(image: Image.Image, source: pathlib.Path) -> None:
+    """
+    Drop a supplied illustration into the safe zone, trimmed and centred.
+
+    Generated art usually arrives on its own flat background with the subject
+    filling the frame. Trimming that border first means the *subject* is what
+    gets sized to the safe zone, rather than the subject plus whatever margin
+    the generator happened to leave.
+    """
+    art_image = Image.open(source).convert("RGBA")
+    art_image = _trim_border(art_image)
+
+    span = int(ICON_SIZE * SAFE_FRACTION)
+    art_image.thumbnail((span, span), Image.LANCZOS)
+    x = (ICON_SIZE - art_image.width) // 2
+    y = (ICON_SIZE - art_image.height) // 2
+    image.alpha_composite(art_image, (x, y))
+    print(f"  using {source.name}, inset to {SAFE_FRACTION:.0%} of the canvas")
+
+
+def _trim_border(image: Image.Image, tolerance: int = 26) -> Image.Image:
+    """Crop away a uniform border, judged from the four corners."""
+    rgb = image.convert("RGB")
+    w, h = rgb.size
+    corners = [
+        rgb.getpixel(p) for p in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1))
+    ]
+    background = tuple(sum(c[i] for c in corners) // 4 for i in range(3))
+
+    def close(pixel) -> bool:
+        return all(abs(pixel[i] - background[i]) <= tolerance for i in range(3))
+
+    left, right, top, bottom = 0, w - 1, 0, h - 1
+    while left < right and all(close(rgb.getpixel((left, y))) for y in range(0, h, 8)):
+        left += 1
+    while right > left and all(close(rgb.getpixel((right, y))) for y in range(0, h, 8)):
+        right -= 1
+    while top < bottom and all(close(rgb.getpixel((x, top))) for x in range(0, w, 8)):
+        top += 1
+    while bottom > top and all(close(rgb.getpixel((x, bottom))) for x in range(0, w, 8)):
+        bottom -= 1
+
+    if right - left < w * 0.3 or bottom - top < h * 0.3:
+        return image          # the trim went wrong; keep the original
+    return image.crop((left, top, right + 1, bottom + 1))
 
 
 def build_splash() -> None:

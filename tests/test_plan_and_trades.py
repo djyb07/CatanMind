@@ -31,9 +31,7 @@ def scorer(board):
     return Scorer(board)
 
 
-@pytest.fixture
-def game(board, scorer):
-    """A played-out setup, empty hands, ready for a normal turn."""
+def _played_out(board, scorer, *, use_forecast):
     state = GameState(board, num_players=4, me=1)
     flow = TurnFlow(state)
     while flow.in_setup:
@@ -49,7 +47,26 @@ def game(board, scorer):
     for player in state.players.values():
         for resource in Resource:
             player.hand.cards[resource] = 0
-    return state, flow, TurnAdvisor(board, scorer)
+    return state, flow, TurnAdvisor(board, scorer, use_forecast=use_forecast)
+
+
+@pytest.fixture
+def game(board, scorer):
+    """
+    A played-out setup with the forecast off.
+
+    Trade advice is two layers: cheap heuristics about scarcity and score,
+    then a rollout that can overrule them. These tests are about the first
+    layer, so the second is switched off — otherwise a passing test says
+    nothing about which of the two actually did the work.
+    """
+    return _played_out(board, scorer, use_forecast=False)
+
+
+@pytest.fixture
+def forecasting_game(board, scorer):
+    """The same position with the rollout doing the deciding."""
+    return _played_out(board, scorer, use_forecast=True)
 
 
 def give(state, player, **resources):
@@ -413,15 +430,90 @@ def test_trading_with_the_runaway_leader_is_discouraged(game):
     assert "Careful" in risky[0].reason
 
 
-def test_the_bank_wins_when_the_only_partner_is_the_leader(game):
+def test_the_heuristics_send_you_to_the_bank_against_the_leader(game):
+    """
+    Judged on scarcity alone, handing the leader a card they cannot make is
+    the wrong move and the bank is the safe route. Whether that holds once the
+    game is played out is a separate question — see the forecast tests.
+    """
     state, _flow, advisor = game
     give(state, 1, wood=1, sheep=4)
     give(state, 2, brick=3)
     push_vp(state, 2, state.target_vp - 2)
     offers = advisor.trade_advice(state, 1)
-    assert offers[0].action == "trade_bank", (
-        "with the leader as the only partner, the bank is the safe route"
-    )
+    assert offers[0].action == "trade_bank"
+
+
+# -- the race ---------------------------------------------------------------
+
+
+def test_the_forecast_can_overrule_the_scarcity_rule(forecasting_game):
+    """
+    The point of playing it out.
+
+    A card an opponent cannot produce looks dangerous to hand over, but if the
+    rollout says it does nothing for them and plenty for you, the trade is
+    good. Refusing it would be leaving the game on the table out of caution.
+    """
+    state, _flow, advisor = forecasting_game
+    give(state, 1, wood=1, sheep=4)
+    give(state, 2, brick=3)
+    push_vp(state, 2, state.target_vp - 2)
+
+    offers = [
+        a for a in advisor.trade_advice(state, 1) if a.action == "trade_player"
+    ]
+    assert offers
+    offer = offers[0]
+    assert offer.race_gain or offer.race_cost, "the forecast never ran"
+    if offer.race_gain > offer.race_cost:
+        assert offer.value > 0, "a trade that wins the race should stand"
+
+
+def test_the_forecast_reports_what_each_side_gains(forecasting_game):
+    state, _flow, advisor = forecasting_game
+    give(state, 1, wood=1, sheep=4)
+    give(state, 2, brick=3)
+    offers = [
+        a for a in advisor.trade_advice(state, 1) if a.action == "trade_player"
+    ]
+    assert offers
+    assert "points" in offers[0].reason
+
+
+def test_a_trade_that_helps_them_more_is_flagged(board, scorer):
+    """When the rollout says they gain more than you, the advice says so."""
+    state, _flow, advisor = _played_out(board, scorer, use_forecast=True)
+    give(state, 1, wood=1, sheep=4)
+    give(state, 2, brick=3)
+    push_vp(state, 2, state.target_vp - 2)
+    offers = [
+        a for a in advisor.trade_advice(state, 1) if a.action == "trade_player"
+    ]
+    assert offers
+    offer = offers[0]
+    if offer.race_cost > offer.race_gain:
+        assert "think twice" in offer.reason
+
+
+def test_the_forecast_never_stops_advice_being_given(board, scorer):
+    """A rollout is an improvement on the heuristic, not a precondition."""
+    state, _flow, advisor = _played_out(board, scorer, use_forecast=True)
+    give(state, 1, wood=1, sheep=4)
+    give(state, 2, brick=3)
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("rollout failed")
+
+    from catanmind import forecast as forecast_module
+
+    original = forecast_module.trade_race
+    forecast_module.trade_race = explode
+    try:
+        offers = advisor.trade_advice(state, 1)
+    finally:
+        forecast_module.trade_race = original
+    assert offers, "a broken forecast must not silence the advisor"
 
 
 def test_an_empty_opponent_is_not_asked_for_cards(game):
