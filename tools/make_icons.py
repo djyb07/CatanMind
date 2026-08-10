@@ -19,7 +19,8 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from catanmind.ui import ACCENT, BG, ON_ACCENT, SEA  # noqa: E402
+from catanmind import art  # noqa: E402
+from catanmind.ui import BG, SEA  # noqa: E402
 
 ASSETS = ROOT / "assets"
 
@@ -49,24 +50,131 @@ def _font(size: int):
     return ImageFont.load_default()
 
 
-def draw_mark(image: Image.Image, centre, radius: float, letter: str = "C") -> None:
-    """The gold tile with a dark initial — the same mark the app shows."""
-    draw = ImageDraw.Draw(image)
-    # A slightly larger hex behind it reads as the tile's edge at small sizes.
-    draw.polygon(hexagon(centre, radius * 1.06), fill=SEA)
-    draw.polygon(hexagon(centre, radius), fill=ACCENT)
+def _gradient_polygon(
+    image: Image.Image, points, top_colour: str, bottom_colour: str
+) -> None:
+    """
+    Fill a polygon with a vertical gradient.
 
-    font = _font(int(radius * 1.15))
-    box = draw.textbbox((0, 0), letter, font=font)
-    draw.text(
-        (
-            centre[0] - (box[2] - box[0]) / 2 - box[0],
-            centre[1] - (box[3] - box[1]) / 2 - box[1],
-        ),
-        letter,
-        font=font,
-        fill=ON_ACCENT,
+    PIL has no gradient fill, so this paints one into a scratch layer and uses
+    the polygon as a mask. Cheap, and it is what stops the tiles reading as
+    flat coloured paper.
+    """
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    box = (int(min(xs)) - 1, int(min(ys)) - 1, int(max(xs)) + 2, int(max(ys)) + 2)
+    w, h = max(1, box[2] - box[0]), max(1, box[3] - box[1])
+
+    ramp = Image.new("RGB", (1, h))
+    top = art.shade(top_colour, 0)
+    bottom = art.shade(bottom_colour, 0)
+    tr, tg, tb = art._hex_to_rgb(top)
+    br, bg, bb = art._hex_to_rgb(bottom)
+    for y in range(h):
+        t = y / max(1, h - 1)
+        ramp.putpixel(
+            (0, y),
+            (
+                int(tr + (br - tr) * t),
+                int(tg + (bg - tg) * t),
+                int(tb + (bb - tb) * t),
+            ),
+        )
+    ramp = ramp.resize((w, h))
+
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).polygon(
+        [(x - box[0], y - box[1]) for x, y in points], fill=255
     )
+    image.paste(ramp, (box[0], box[1]), mask)
+
+
+def draw_tile(
+    image: Image.Image, centre, radius: float, colour: str, resource
+) -> None:
+    """One extruded tile with its terrain, the way the board draws it."""
+    draw = ImageDraw.Draw(image)
+    depth = radius * 0.17
+    corners = hexagon(centre, radius)
+
+    # The slab underneath, showing as thickness along the bottom edge.
+    draw.polygon(
+        [(x, y + depth) for x, y in corners], fill=art.shade(colour, -0.55)
+    )
+    _gradient_polygon(
+        image, corners, art.shade(colour, 0.30), art.shade(colour, -0.27)
+    )
+    _terrain(draw, centre, radius * 0.82, colour, resource)
+    draw.line(corners + [corners[0]], fill="#07131c", width=max(2, int(radius * 0.06)))
+
+
+def _terrain(draw, centre, radius, colour, resource) -> None:
+    """A hint of the tile's landscape. Simplified for icon sizes."""
+    cx, cy = centre
+    if resource == "wood":
+        for dx, dy, s in ((-0.42, 0.16, 0.52), (0.0, -0.12, 0.62), (0.44, 0.20, 0.48)):
+            x, y = cx + radius * dx, cy + radius * dy
+            size = radius * s
+            draw.polygon(
+                [(x, y - size), (x + size * 0.62, y + size * 0.5),
+                 (x - size * 0.62, y + size * 0.5)],
+                fill=art.shade(colour, -0.38),
+            )
+            draw.polygon(
+                [(x, y - size), (x, y + size * 0.5),
+                 (x - size * 0.62, y + size * 0.5)],
+                fill=art.shade(colour, -0.18),
+            )
+    elif resource == "wheat":
+        for i in range(4):
+            x = cx + radius * (-0.5 + i * 0.33)
+            draw.line(
+                [(x, cy + radius * 0.55), (x, cy - radius * 0.35)],
+                fill=art.shade(colour, -0.34), width=max(2, int(radius * 0.07)),
+            )
+            draw.ellipse(
+                [x - radius * 0.11, cy - radius * 0.52,
+                 x + radius * 0.11, cy - radius * 0.20],
+                fill=art.shade(colour, 0.34),
+            )
+    elif resource == "ore":
+        for dx, height, width in ((-0.34, 0.72, 0.42), (0.30, 0.86, 0.46)):
+            apex = (cx + radius * dx, cy - radius * height * 0.55)
+            left = (cx + radius * (dx - width), cy + radius * 0.48)
+            right = (cx + radius * (dx + width), cy + radius * 0.48)
+            draw.polygon([apex, right, left], fill=art.shade(colour, -0.22))
+            draw.polygon(
+                [apex, left, (cx + radius * dx, cy + radius * 0.48)],
+                fill=art.shade(colour, 0.26),
+            )
+            draw.polygon(
+                [apex,
+                 (apex[0] + radius * width * 0.28, apex[1] + radius * 0.15),
+                 (apex[0] - radius * width * 0.28, apex[1] + radius * 0.15)],
+                fill="#e8eef3",
+            )
+
+
+def draw_mark(image: Image.Image, centre, radius: float, letter: str = "C") -> None:
+    """
+    The app's mark: three tiles in a cluster, the way the island reads.
+
+    A gold hexagon with a letter in it says nothing about the game. Three
+    terrain tiles say Catan at a glance, which is the entire job of an icon on
+    a crowded home screen.
+    """
+    from catanmind.ui import RESOURCE_COLOR
+    from catanmind.board import Resource
+
+    tile = radius * 0.62
+    # Point-up hexes tile on a 30-degree offset; these three share a corner.
+    positions = [
+        (centre[0], centre[1] - tile * 0.92, Resource.WOOD, "wood"),
+        (centre[0] - tile * 0.87, centre[1] + tile * 0.52, Resource.ORE, "ore"),
+        (centre[0] + tile * 0.87, centre[1] + tile * 0.52, Resource.WHEAT, "wheat"),
+    ]
+    for cx, cy, resource, name in positions:
+        draw_tile(image, (cx, cy), tile, RESOURCE_COLOR[resource], name)
 
 
 def sea_lattice(image: Image.Image, spacing: float, colour: str) -> None:

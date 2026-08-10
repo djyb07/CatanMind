@@ -221,6 +221,79 @@ def test_the_screen_builds_at_every_size(app, name, width, height):
         assert app.root.controls
 
 
+def test_the_app_keeps_clear_of_the_system_bars(app):
+    """
+    Android paints the clock and battery over the top of the window and the
+    gesture bar over the bottom. Without a SafeArea the turn banner sits under
+    the status bar and is unreadable — something no desktop run reveals.
+    """
+    root = app.build()
+    assert type(root).__name__ == "SafeArea"
+
+
+@pytest.mark.parametrize("name,width,height", DEVICES)
+def test_no_dialog_can_outgrow_the_screen(app, name, width, height):
+    """
+    An unbounded dialog runs off the bottom of a phone: the rows past the fold
+    cannot be reached and the buttons end up painted over them.
+    """
+    sized(app, width, height)
+    body = app._dialog_body(ft_column_of(12))
+    assert body.height is not None
+    assert body.height <= height * 0.6, f"{name}: dialog taller than the screen"
+    assert body.height >= 220
+    inner = body.content
+    assert inner.scroll is not None, "a bounded dialog has to scroll"
+
+
+def ft_column_of(rows):
+    import flet as ft
+
+    return ft.Column([ft.Text(f"row {i}") for i in range(rows)])
+
+
+@pytest.mark.parametrize("name,width,height", DEVICES)
+def test_every_dialog_the_app_opens_is_bounded(app, name, width, height):
+    """Walk the real dialogs rather than trusting the helper is used."""
+    sized(app, width, height)
+    play_setup(app)
+    app.flow.roll(8)
+    app.refresh()
+
+    openers = [
+        app._roll_dialog,
+        app._trade_dialog,
+        app._buy_dev_dialog,
+        app._monopoly_dialog,
+        app._year_of_plenty_dialog,
+    ]
+    for opener in openers:
+        app.page.dialogs.clear()
+        opener()
+        assert app.page.dialogs, f"{opener.__name__} opened nothing"
+        content = app.page.dialogs[-1].content
+        assert getattr(content, "height", None) is not None, (
+            f"{opener.__name__} is unbounded at {name}"
+        )
+        assert content.height <= height * 0.6
+
+
+def play_setup(app):
+    from catanmind import rules
+
+    while app.flow.in_setup:
+        node = next(
+            n for n in rules.legal_settlements(
+                app.state, app.flow.current, setup=True
+            )
+        )
+        app.flow.place_setup_settlement(node)
+        edge = next(
+            e for e in app.board.node_edges[node] if e not in app.state.roads
+        )
+        app.flow.place_setup_road(edge)
+
+
 def test_resizing_the_window_resizes_the_board(app):
     small = sized(app, 390, 700).scale
     large = sized(app, 390, 1200).scale

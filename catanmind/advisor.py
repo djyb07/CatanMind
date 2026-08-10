@@ -32,6 +32,7 @@ from catanmind.board import (
 from catanmind.scoring import (
     COVERAGE_FLOOR,
     PHASE_WEIGHTS,
+    SATURATION,
     Scorer,
     SpotScore,
     _join,
@@ -87,6 +88,11 @@ PAIR_TOLERANCE = 0.5
 TRADE_GOAL_WEIGHT: Dict[str, float] = {
     "city": 1.30, "settlement": 1.25, "dev_card": 1.00, "road": 0.90,
 }
+
+#: Asking a player costs nothing if they refuse — the bank is still there
+#: afterwards. So an unlikely ask keeps this share of its value rather
+#: than being scaled away by the odds, and the ask is tried first.
+ASK_FLOOR = 0.62
 
 #: What one spare card is worth giving up. Trades are priced net of this, which
 #: is why asking a player for a card beats paying the bank four for the same
@@ -961,6 +967,44 @@ class TurnAdvisor:
                 out.append((item, short))
         return out
 
+    def _threat_level(
+        self, state: GameState, other: int, their_vp: int, leader: int
+    ) -> float:
+        """
+        0..1 — how much it matters that this player gains ground.
+
+        Distance from the target, not a cliff at one score: a player on 7 of
+        10 is already worth being careful with, and one on 3 is not.
+        """
+        # Two points from winning is nearly maximum alarm, not two thirds of
+        # it: at that range one good turn ends the game.
+        remaining = max(1, state.target_vp - their_vp)
+        level = max(0.0, min(1.0, (5.0 - remaining) / 3.5))
+        if their_vp >= leader and their_vp >= state.target_vp - 4:
+            level = max(level, 0.5)
+        return level
+
+    def _wants(
+        self, state: GameState, other: int, resource: Resource
+    ) -> float:
+        """
+        0..1 — how badly ``other`` needs one card of ``resource``.
+
+        Driven by what their engine produces rather than by what they hold: a
+        player who makes no ore wants ore every turn of the game, whether or
+        not they happen to have one in hand right now. This is the number that
+        decides both whether they will accept a trade and whether accepting
+        it helps them, which is why it is one function and not two.
+        """
+        produced = rules.expected_yield(state, other, ignore_robber=True)
+        rate = produced.get(resource, 0.0)
+        if rate < COVERAGE_FLOOR:
+            scarcity = 1.0
+        else:
+            scarcity = max(0.0, 1.0 - rate / SATURATION)
+        value = self.scorer.values[resource]
+        return max(0.0, min(1.0, scarcity * 0.75 + (value - 0.5) * 0.25))
+
     def _spare_cards(
         self, state: GameState, player: int, cost: Dict[Resource, int]
     ) -> Dict[Resource, int]:
@@ -1086,27 +1130,37 @@ class TurnAdvisor:
                 if chance <= 0:
                     continue
 
-                # Offer what we least need and they most likely want.
-                their_gaps = rules.expected_yield(state, other, ignore_robber=True)
-                def offer_rank(resource: Resource) -> float:
-                    scarcity_for_them = 1.0 if their_gaps[resource] < COVERAGE_FLOOR else 0.0
-                    return -(scarcity_for_them * 2.0 - self.scorer.values[resource])
+                their_vp = rules.victory_points(state, other, include_hidden=False)
+                threat = self._threat_level(state, other, their_vp, leader)
 
                 candidates = [r for r, count in spare.items() if count >= missing]
                 if not candidates:
                     continue
-                give = min(candidates, key=offer_rank)
 
-                their_vp = rules.victory_points(state, other, include_hidden=False)
-                danger = 0.0
-                if their_vp >= state.target_vp - 2:
-                    danger = 0.75
-                elif their_vp >= leader and their_vp >= state.target_vp - 3:
-                    danger = 0.4
+                # What to offer is a three-way trade-off: they have to want it
+                # enough to say yes, it must not hand a dangerous opponent the
+                # card they were missing, and it should be the one we mind
+                # losing least. Against a safe player the first term wins;
+                # against the leader the second does, which is the whole point.
+                def offer_score(resource: Resource) -> float:
+                    wanted = self._wants(state, other, resource)
+                    return (
+                        wanted * (1.0 - threat)
+                        - wanted * threat * 2.2
+                        - self.scorer.values[resource] * 0.35
+                    )
+
+                give = max(candidates, key=offer_score)
+                helps_them = self._wants(state, other, give)
+                danger = threat * helps_them
 
                 phrase, scale, urgency = effect(need)
+                # Asking costs nothing if they refuse — the bank is still
+                # there afterwards — so an unlikely ask keeps most of its
+                # value rather than being scaled away by the odds.
+                confidence = ASK_FLOOR + (1.0 - ASK_FLOOR) * chance
                 score = (
-                    12.0 * chance * (1.0 - danger) * scale * weight
+                    12.0 * confidence * (1.0 - danger) * scale * weight
                     - missing * CARD_COST
                 )
                 if score <= best_score:
@@ -1117,18 +1171,28 @@ class TurnAdvisor:
                     f"{estimate.describe()}, so about a {chance:.0%} chance "
                     f"they hold {need.value}."
                 )
-                if their_gaps[give] < COVERAGE_FLOOR:
+                if helps_them > 0.6:
                     reason += (
-                        f" They produce no {give.value}, which gives them a "
+                        f" They produce little {give.value}, so they have a "
                         "reason to say yes."
                     )
-                if danger >= 0.75:
+                elif helps_them < 0.3:
                     reason += (
-                        f" Careful — Player {other} is on {their_vp} points; "
-                        "only trade if it wins you the game first."
+                        f" They already make plenty of {give.value}, so it "
+                        "costs them nothing to hand over — and gains them "
+                        "nothing either."
                     )
-                elif danger:
-                    reason += f" Player {other} is the one to watch, at {their_vp} points."
+                if threat >= 0.7 and danger >= 0.4:
+                    reason += (
+                        f" Careful — Player {other} is on {their_vp} points "
+                        f"and needs {give.value}. Only trade if it wins you "
+                        "the game first."
+                    )
+                elif threat >= 0.7:
+                    reason += (
+                        f" Player {other} is on {their_vp} points, but "
+                        f"{give.value} is no use to them, so this is safe."
+                    )
 
                 best = Advice(
                     action="trade_player",

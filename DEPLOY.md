@@ -84,6 +84,35 @@ All of it lives in `pyproject.toml`, so the build command never changes:
 | Build number | `[tool.flet] build_number` | **Increase this on every release** — Android refuses to install a build whose number is not higher than the one already on the phone |
 | Icon and splash | `assets/icon.png`, `assets/splash.png` | Regenerate with `python tools/make_icons.py` |
 
+### Replacing the icon with an illustrated one
+
+`tools/make_icons.py` draws the icon from the same palette and tile art as the
+board, so it always matches the app. If you want something illustrated
+instead, drop a **1024×1024 PNG** at `assets/icon.png` and rebuild — nothing
+else needs changing.
+
+Prompt for an AI image generator:
+
+> A premium mobile app icon for a board-game strategy assistant. Three
+> interlocking hexagonal tiles arranged in a tight triangular cluster, viewed
+> straight on, each tile rendered with visible thickness like a physical game
+> piece catching light from the upper left. Top tile: dense evergreen forest.
+> Lower left: grey stone mountains with snow-capped peaks. Lower right: golden
+> wheat field. Rich painterly texture on each tile, warm and inviting.
+> Background: deep navy blue ocean with a very subtle darker hexagon lattice.
+> Soft ambient shadow beneath the cluster. Clean, modern, professional,
+> centred composition with generous margin, no text, no letters, no border.
+> Flat-illustration style with soft dimensional shading, not photorealistic.
+> Square 1024×1024.
+
+Two things to keep in mind:
+
+- **Leave a margin.** Android crops launcher icons to a circle or squircle and
+  only guarantees the middle two-thirds. Anything closer to the edge than that
+  gets cut off on some phones.
+- **Check it small.** Look at it at about 1cm across before committing. Detail
+  that reads beautifully at full size often turns to mud on a home screen.
+
 ---
 
 ## Getting it onto Google Play

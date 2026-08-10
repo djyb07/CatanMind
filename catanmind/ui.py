@@ -45,6 +45,7 @@ from catanmind.board import (
 )
 from catanmind.flow import Action, Step, TurnFlow
 from catanmind import art
+from catanmind import splash
 from catanmind.scoring import Scorer
 from catanmind.state import GameState
 from catanmind.tracker import Tracker
@@ -700,7 +701,15 @@ class CatanMind:
     # -- shell -------------------------------------------------------------
 
     def build(self) -> ft.Control:
-        return self.root
+        """
+        The app, kept clear of the system furniture.
+
+        Android draws the clock, signal and battery over the top of the window
+        and the gesture bar over the bottom. Without this the turn banner sits
+        underneath the status bar and is unreadable on a real phone — which no
+        amount of desktop testing shows you.
+        """
+        return ft.SafeArea(content=self.root, expand=True)
 
     def refresh(self) -> None:
         """Rebuild the whole screen from state. The single update path."""
@@ -1036,12 +1045,15 @@ class CatanMind:
             ft.AlertDialog(
                 modal=True, bgcolor=SURFACE,
                 title=ft.Text(f"Tile {index} of 19", color=TEXT),
-                content=ft.Column(
-                    [
-                        ft.Text("Resource", size=12, color=MUTED), res_row,
-                        ft.Text("Number", size=12, color=MUTED), num_row,
-                    ],
-                    tight=True, spacing=8, width=340,
+                content=self._dialog_body(
+                    ft.Column(
+                        [
+                            ft.Text("Resource", size=12, color=MUTED), res_row,
+                            ft.Text("Number", size=12, color=MUTED), num_row,
+                        ],
+                        tight=True, spacing=8,
+                    ),
+                    340,
                 ),
                 actions=[
                     ft.TextButton("Clear", on_click=clear),
@@ -1102,9 +1114,8 @@ class CatanMind:
             ft.AlertDialog(
                 modal=True, bgcolor=SURFACE,
                 title=ft.Text(f"Port {slot + 1}", color=TEXT),
-                content=ft.Container(
-                    width=330,
-                    content=ft.Row(
+                content=self._dialog_body(
+                    ft.Row(
                         [
                             btn(
                                 label,
@@ -1180,7 +1191,7 @@ class CatanMind:
             ft.AlertDialog(
                 modal=True, bgcolor=SURFACE,
                 title=ft.Text("Which port is where?", color=TEXT),
-                content=ft.Container(content=rows, width=330),
+                content=self._dialog_body(rows),
                 actions=[
                     btn("Done", on_click=lambda _e: self._close_dialog(),
                               bgcolor=ACCENT, color=ON_ACCENT)
@@ -1188,6 +1199,24 @@ class CatanMind:
             )
         )
         self.page.update()
+
+    def _dialog_body(self, content: ft.Control, width: float = 330) -> ft.Control:
+        """
+        Wrap a dialog's contents so it can never outgrow the screen.
+
+        An unbounded dialog body simply runs off the bottom on a phone: the
+        rows past the fold are unreachable and the action buttons end up
+        painted on top of them. Bounding the height and letting it scroll is
+        the whole fix.
+        """
+        available = self.page_height or 844
+        return ft.Container(
+            content=ft.Column(
+                [content], scroll=ft.ScrollMode.AUTO, tight=True,
+            ),
+            width=width,
+            height=max(220.0, min(430.0, available * 0.52)),
+        )
 
     def _close_dialog(self) -> None:
         self.page.pop_dialog()
@@ -2017,9 +2046,8 @@ class CatanMind:
             ft.AlertDialog(
                 modal=True, bgcolor=SURFACE,
                 title=ft.Text("What did the dice show?", color=TEXT),
-                content=ft.Container(
-                    width=320,
-                    content=ft.Row(
+                content=self._dialog_body(
+                    ft.Row(
                         [
                             btn(
                                 str(n),
@@ -2031,6 +2059,7 @@ class CatanMind:
                         ],
                         wrap=True, spacing=6, run_spacing=6,
                     ),
+                    320,
                 ),
                 actions=[
                     ft.TextButton("Cancel", on_click=lambda _e: self._close_dialog())
@@ -2084,9 +2113,8 @@ class CatanMind:
                     "Which card was drawn?" if mine
                     else f"Player {self.flow.current} drew…", color=TEXT,
                 ),
-                content=ft.Container(
-                    width=330,
-                    content=ft.Column(
+                content=self._dialog_body(
+                    ft.Column(
                         [
                             ft.Text(
                                 "Read it off the card you just took."
@@ -2129,9 +2157,8 @@ class CatanMind:
             ft.AlertDialog(
                 modal=True, bgcolor=SURFACE,
                 title=ft.Text("Monopoly — name a resource", color=TEXT),
-                content=ft.Container(
-                    width=330,
-                    content=ft.Row(
+                content=self._dialog_body(
+                    ft.Row(
                         [
                             btn(
                                 RESOURCE_LABEL[r], bgcolor=RESOURCE_COLOR[r],
@@ -2201,7 +2228,7 @@ class CatanMind:
             ft.AlertDialog(
                 modal=True, bgcolor=SURFACE,
                 title=ft.Text("Year of plenty", color=TEXT),
-                content=ft.Container(content=body, width=330),
+                content=self._dialog_body(body),
                 actions=[
                     ft.TextButton("Cancel", on_click=lambda _e: self._close_dialog()),
                     btn("Take them", on_click=confirm, bgcolor=ACCENT,
@@ -2226,14 +2253,16 @@ class CatanMind:
             ft.AlertDialog(
                 modal=True, bgcolor=SURFACE,
                 title=ft.Text(action.label, color=TEXT),
-                content=ft.Row(
-                    [
-                        btn(f"Player {p}", bgcolor=PLAYER_COLOR[p],
-                                  color="#ffffff",
-                                  on_click=lambda _e, p=p: pick(p))
-                        for p in victims
-                    ],
-                    wrap=True, spacing=6, run_spacing=6,
+                content=self._dialog_body(
+                    ft.Row(
+                        [
+                            btn(f"Player {p}", bgcolor=PLAYER_COLOR[p],
+                                color="#ffffff",
+                                on_click=lambda _e, p=p: pick(p))
+                            for p in victims
+                        ],
+                        wrap=True, spacing=6, run_spacing=6,
+                    ),
                 ),
                 actions=[
                     ft.TextButton("Cancel", on_click=lambda _e: self._close_dialog())
@@ -2319,7 +2348,7 @@ class CatanMind:
         dialog = ft.AlertDialog(
             modal=True, bgcolor=SURFACE,
             title=ft.Text("Discard", color=TEXT),
-            content=ft.Container(content=body, width=330),
+            content=self._dialog_body(body),
             actions=[
                 ft.TextButton("Cancel", on_click=lambda _e: self._close_dialog()),
                 btn("Discard", on_click=confirm, bgcolor=ACCENT,
@@ -2505,7 +2534,7 @@ class CatanMind:
             ft.AlertDialog(
                 modal=True, bgcolor=SURFACE,
                 title=ft.Text("Trade", color=TEXT),
-                content=ft.Container(content=body, width=330),
+                content=self._dialog_body(body),
                 actions=[
                     ft.TextButton("Cancel", on_click=lambda _e: self._close_dialog()),
                     btn("Confirm", on_click=confirm, bgcolor=ACCENT,
@@ -2594,5 +2623,34 @@ def main(page: ft.Page) -> None:
         app.refresh()
 
     page.on_resized = on_resized
-    page.add(app.build())
-    app.refresh()
+
+    # The opening sequence owns the window until it hands over. It is
+    # decoration, so anything going wrong with it drops straight through to
+    # the app rather than leaving the player looking at a blank screen.
+    splash.set_palette(RESOURCE_COLOR)
+    shell = ft.Container(expand=True)
+
+    def start_app() -> None:
+        shell.content = app.build()
+        app.refresh()
+        try:
+            page.update()
+        except Exception:
+            pass
+
+    try:
+        opening = splash.Splash(
+            page, start_app,
+            width=getattr(page, "width", None) or 390,
+            height=getattr(page, "height", None) or 844,
+            palette={
+                "bg": BG, "accent": ACCENT, "on_accent": ON_ACCENT,
+                "text": TEXT, "muted": MUTED,
+            },
+        )
+        shell.content = opening.root
+        page.add(shell)
+        page.run_task(opening.play)
+    except Exception:
+        page.add(shell)
+        start_app()

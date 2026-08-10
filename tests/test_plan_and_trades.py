@@ -287,6 +287,103 @@ def test_asking_a_player_beats_paying_the_bank_four_to_one(game):
     assert offers[0].value > bank.value
 
 
+def test_asking_is_tried_before_the_bank_because_refusal_costs_nothing(game):
+    """
+    If they say no you can still pay the bank, so an uncertain ask is not
+    worth much less than a certain one — it is a free attempt.
+    """
+    state, _flow, advisor = game
+    give(state, 1, wood=1, sheep=4)
+    give(state, 2, brick=3)
+    offers = advisor.trade_advice(state, 1)
+    assert offers[0].action == "trade_player"
+
+
+def test_an_uncertain_ask_is_not_scaled_away_by_the_odds(game):
+    """
+    A one-in-three chance should stay a serious option, because a refusal
+    costs nothing. It need not beat a cheap 3:1 port — that is a real
+    trade-off — but it must not collapse the way a plain multiply would.
+    """
+    state, _flow, advisor = game
+    give(state, 1, wood=1, sheep=4)
+
+    give(state, 2, brick=3)                      # certain
+    sure = next(
+        a for a in advisor.trade_advice(state, 1) if a.action == "trade_player"
+    )
+
+    for resource in Resource:
+        state.players[2].hand.cards[resource] = 0
+    give(state, 2, brick=1, ore=1, wheat=1)      # one chance in three
+    unsure = next(
+        a for a in advisor.trade_advice(state, 1) if a.action == "trade_player"
+    )
+
+    assert unsure.value < sure.value
+    assert unsure.value > sure.value * 0.6, (
+        "a third of the odds should not mean a third of the value"
+    )
+
+
+def test_how_badly_an_opponent_wants_a_card_drives_the_decision(game):
+    """
+    One number decides both whether they will accept and whether accepting
+    helps them, which is why it is a single function.
+    """
+    state, _flow, advisor = game
+    produced = rules.expected_yield(state, 2, ignore_robber=True)
+    missing = [r for r in Resource if produced[r] == 0]
+    plentiful = [r for r in Resource if produced[r] > 0]
+    if not missing or not plentiful:
+        pytest.skip("this setup produces everything or nothing")
+    assert advisor._wants(state, 2, missing[0]) > advisor._wants(
+        state, 2, max(plentiful, key=lambda r: produced[r])
+    )
+
+
+def test_the_alarm_rises_as_a_player_nears_the_target(game):
+    state, _flow, advisor = game
+    far = advisor._threat_level(state, 2, state.target_vp - 6, 0)
+    near = advisor._threat_level(state, 2, state.target_vp - 2, 0)
+    winning = advisor._threat_level(state, 2, state.target_vp - 1, 0)
+    assert far < near < winning
+    assert winning >= 0.9, "one point away should be near-maximum alarm"
+
+
+def test_a_card_the_leader_cannot_use_is_not_treated_as_dangerous(game):
+    """
+    The point is not "never trade with the leader" — it is "never hand the
+    leader what they were missing". Something they already make in quantity
+    costs them nothing and gains them nothing.
+    """
+    state, _flow, advisor = game
+    produced = rules.expected_yield(state, 2, ignore_robber=True)
+    useless = max(Resource, key=lambda r: produced[r])
+    if produced[useless] <= 0:
+        pytest.skip("player 2 produces nothing on this board")
+    needed = min(Resource, key=lambda r: produced[r])
+
+    threat = advisor._threat_level(state, 2, state.target_vp - 2, 0)
+    danger_if_useless = threat * advisor._wants(state, 2, useless)
+    danger_if_needed = threat * advisor._wants(state, 2, needed)
+    assert danger_if_useless < danger_if_needed
+
+
+def test_the_warning_names_the_card_that_makes_it_risky(game):
+    state, _flow, advisor = game
+    give(state, 1, wood=1, sheep=4)
+    give(state, 2, brick=3)
+    push_vp(state, 2, state.target_vp - 2)
+    risky = [
+        a for a in advisor.trade_advice(state, 1) if a.action == "trade_player"
+    ]
+    assert risky
+    reason = risky[0].reason
+    assert "Careful" in reason or "no use to them" in reason
+    assert "points" in reason
+
+
 def test_a_good_port_makes_the_bank_competitive_again(game):
     """At 2:1 the bank costs two cards instead of four, so the gap narrows."""
     state, _flow, advisor = game
